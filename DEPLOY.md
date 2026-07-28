@@ -157,6 +157,23 @@ rsync -avz deploy@<server-ip>:~/TelegramGroup-AI-assistant/backups/ ./vps-backup
   reaches it over the internal Docker network. Never publish it as
   `"6379:6379"` — that binds all interfaces, and an unauthenticated Redis on a
   public IP is among the most heavily scanned targets on the internet.
+
+- **ufw does not protect Docker-published ports.** This is the dangerous part
+  of the point above. Docker writes its own iptables rules into the `DOCKER`
+  chain, which are evaluated *before* ufw's, so a container port published on
+  `0.0.0.0` is reachable from the internet even with `ufw default deny
+  incoming` and the port absent from `ufw status`. The loopback binding is
+  therefore the actual protection here, not the firewall — do not assume ufw
+  is a safety net if you ever change that mapping. To restrict a genuinely
+  public container port, add rules to the `DOCKER-USER` chain instead.
+
+- **Verify exposure from somewhere you trust.** A plain TCP connect test can
+  lie: some ISPs and corporate networks run middleboxes that complete
+  connections to *any* port, so a "port is open" result may be entirely
+  fabricated. Sanity-check by probing a port nothing listens on (e.g. 9999) —
+  if that also looks open, your vantage point is untrustworthy. Testing from
+  the server against its own public IP, or using an external port scanner,
+  gives a real answer.
 - **Do not open any inbound port other than SSH.** Long polling needs none.
 - Docker log output is capped (10 MB × 3 files per container) so logs can't
   fill the disk.
