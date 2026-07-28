@@ -1,0 +1,11 @@
+# Normalize text files to LF in the repository.
+#
+# This project is developed on Windows but runs on Linux (CI runners and the
+# node:22-alpine image). A multi-line `run: |` block in a GitHub Actions
+# workflow checked out with CRLF fails at runtime with "$'\r': command not
+# found", so this is load-bearing, not just cosmetic.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.db binary

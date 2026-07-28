@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    name: Tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.x matches the Dockerfile's runtime; 24.x gives early warning of
+        # breakage as node:sqlite moves out of experimental.
+        node: ['22.x', '24.x']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The suite needs no BOT_TOKEN, DEEPSEEK_API_KEY, Redis or network
+      # access: every test uses its own throwaway SQLite file in the temp dir
+      # and stubs the DeepSeek/Telegram calls. If this job ever starts needing
+      # a secret, something has leaked out of a stub.
+      - name: Run tests
+        run: npm test
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Catches Dockerfile regressions (bad npm ci, missing files after a
+      # .dockerignore change, the non-root chown breaking) without needing
+      # any registry credentials — the image is built and thrown away.
+      - name: Build image
+        run: docker build -t telegram-assistant-bot:ci .
+
+      - name: Verify the image runs as a non-root user
+        run: |
+          user=$(docker inspect telegram-assistant-bot:ci --format '{{.Config.User}}')
+          echo "Image user: '$user'"
+          test "$user" = "node"
+
+      - name: Verify no .env was baked into the image
+        run: |
+          if docker run --rm --entrypoint sh telegram-assistant-bot:ci -c 'test -f /app/.env'; then
+            echo "::error::.env is present inside the image"
+            exit 1
+          fi
+          echo "OK: no .env in image"

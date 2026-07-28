@@ -1,0 +1,254 @@
+# Telegram Assistant Bot
+
+A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summarizes activity in group chats, lets users search past messages, and offers premium subscriptions paid with Telegram Stars.
+
+## Features
+
+- `/start` — welcome message and main menu
+- `/summary [hours]` — AI-generated summary of a group's recent activity. Run inside a group to summarize it directly, or in DM to pick from your linked groups.
+- `/find <query>` — search a group's message history (or across all your linked groups, from DM)
+- `/filter` — pick keywords/topics that get highlighted as a separate "matches your filters" block in summaries
+- `/digest` — premium: configure an automatic daily digest, delivered by DM at a chosen UTC hour
+- `/subscribe` — buy a premium plan with Telegram Stars (native `XTR` payments, no external provider needed)
+- `/language` — switch interface language (English / Русский)
+- `/privacy` — what the bot stores, who sees it, and how long it's kept
+- `/forgetme` — permanently delete your own stored messages and settings
+- `/stats [days]` — admin-only: usage and free→paid conversion report (default 30 days)
+
+## Free vs. premium
+
+| | Free | Premium |
+|---|---|---|
+| `/summary` calls per day | 3 | Unlimited |
+| Lookback window | up to 24h | up to 72h |
+| Groups you can run commands in | 1 | Unlimited |
+| Scheduled daily digest (`/digest`) | ❌ | ✅ |
+
+Limits are defined in [`src/models/subscription.js`](src/models/subscription.js) (`FREE_LIMITS` / `PREMIUM_LIMITS`) and enforced per-requester in [`src/commands/summary.js`](src/commands/summary.js), [`src/commands/find.js`](src/commands/find.js), and [`src/commands/digest.js`](src/commands/digest.js). Daily usage resets at 00:00 UTC. If a user's subscription lapses, their scheduled digest is silently skipped (not deleted) until they resubscribe.
+
+**Group-count limit specifics**: a free user's "first group" is whichever tracked group they were *first active in* (earliest `chat_members.joined_at`), not the first one they happen to run a command in. This only gates which chats a given user can personally query — **message ingestion keeps tracking every group the bot is in for every member, regardless of any individual member's plan**, since the group may belong to other, possibly premium, members who still need it working.
+
+## DeepSeek response caching
+
+The actual DeepSeek call in [`src/services/digest.js`](src/services/digest.js) is cached per `(chat, lookback hours)`, keyed by a fingerprint of the newest message id + message count in that window — so it invalidates automatically the moment a new message arrives or one ages out of the window, with no TTL to tune. This means concurrent `/summary` requests for the same chat (or a scheduled digest landing on a window a user already summarized) reuse the cached text instead of paying for a second API call. Per-user highlight filters are never cached — they're computed fresh every time since they depend on the requester's own `/filter` settings.
+
+## Usage/conversion analytics
+
+Every meaningful funnel moment — `/start`, a new group getting linked, a summary request, a paywall block (daily limit / group limit / premium-only feature), a scheduled digest delivery, viewing `/subscribe`, and a completed purchase — is logged to an `events` table by [`src/services/analytics.js`](src/services/analytics.js). Instrumentation is fire-and-forget: `track()` swallows and logs its own errors so a broken analytics write can never break the feature it's measuring.
+
+Run `/stats` (restricted to the Telegram user IDs in `ADMIN_USER_IDS`) to get a report in DM: event counts with unique-user counts, plus the number that matters most for pricing decisions — **of the users who ever hit a paywall (daily limit, group limit, or a premium-only command), how many went on to actually subscribe**. Non-admins get no reply at all rather than an "unauthorized" message, so the command's existence isn't discoverable.
+
+## How group tracking works
+
+1. Add the bot to a group. It registers the chat and posts a setup message.
+2. **Disable privacy mode** for the bot via [@BotFather](https://t.me/BotFather) → `/setprivacy` → *Disable*. Without this, Telegram only forwards the bot messages that mention/reply to it, so it can't see general chat activity to summarize.
+3. Anyone who sends a message in the group gets linked to it, so they can also run `/summary` and `/find` from a private DM with the bot.
+4. Removing the bot from a group (or it being kicked) deactivates tracking for that chat, and its stored messages are purged after a grace period (see below).
+
+## Localization
+
+The bot ships with English and Russian (`src/locales/`). A new user's language is seeded from their Telegram client's `language_code` on first contact, so their very first reply is already localized; `/language` overrides it and the choice is stored on `users.language`.
+
+**Summaries are generated in the user's language**, not the chat's — a Russian speaker in an English-language group gets a Russian summary. This is why `digest_cache` is keyed by `(chat_id, hours, language)`: the same conversation summarized for two languages is two different artifacts, and without language in the key they would overwrite each other.
+
+Adding a language:
+
+1. Copy `src/locales/en.js` to `src/locales/<code>.js` and translate the values. Keep `aiPromptLanguage` as the language's **English** name — it goes into the DeepSeek prompt.
+2. Register it in the `LOCALES` map in [`src/utils/i18n.js`](src/utils/i18n.js).
+
+`npm test` then enforces that the new locale defines every key the English one does, and that no string drops a `{placeholder}` — a missing key falls back to English, and a missing key entirely renders as the key itself so gaps are visible rather than silent.
+
+Two things to be careful about when touching translations:
+
+- **Reply-keyboard buttons** are matched by their text, so handlers register `allTranslations('menu.x')` rather than a single string. A user who switches language still has the old keyboard rendered client-side until it's replaced, so every variant must keep working.
+- **Filter category keys** (`Tech`, `Business`, …) stay English in the database and are only translated for display — switching language must not silently drop a user's saved filters. Note this also means category matching still searches for the English word in message text; localized keyword matching is a separate, unsolved product question.
+
+## Privacy & data retention
+
+Full policy: [PRIVACY.md](PRIVACY.md). Users can run `/privacy` in Telegram for a summary, and `/forgetme` to delete their own data.
+
+This bot stores other people's group messages and sends them to a third-party AI service, so the retention rules are enforced in code, not just documented:
+
+- Group messages are deleted after `MESSAGE_RETENTION_DAYS` (default **90**). Summaries only ever look back 72h, so this window exists purely to keep `/find` useful — shorten it if search history matters less to you than holding less data.
+- When the bot is removed from a group, that chat's messages are purged after `PURGE_AFTER_REMOVAL_DAYS` (default **7**). The grace period means an accidental removal doesn't destroy history; re-adding the bot within it cancels the pending purge.
+- Both sweeps run on the same hourly scheduler tick as digests (`runRetentionSweep` in `src/services/scheduler.js`), so **Redis must be running for retention to be enforced**. If Redis is down, messages accumulate past their expiry until it comes back.
+- `/forgetme` deletes a user's messages, group links, filters, digests, and usage counters, and anonymizes their analytics events. It deliberately keeps their subscription record so billing history and remaining paid time survive, and it invalidates cached summaries for affected chats so deleted text doesn't live on inside a cached summary.
+
+The bot posts a data-collection notice when it joins a group. If you change the retention defaults, update [PRIVACY.md](PRIVACY.md) to match — the `/privacy` command reads the live config, but the policy file does not.
+
+## Stack
+
+- [Telegraf](https://telegraf.js.org/) — Telegram Bot API framework
+- [`node:sqlite`](https://nodejs.org/api/sqlite.html) — built-in SQLite storage (no native build step required; needs Node.js >= 22.5, run with `--experimental-sqlite` on Node < 24)
+- [BullMQ](https://docs.bullmq.io/) + Redis — background job queue and the hourly scheduler that delivers daily digests (`src/services/scheduler.js`). Redis must be running for scheduled digests to fire; if it's down, on-demand `/summary` and `/find` keep working, they just don't depend on it.
+- [Zod](https://zod.dev/) — schema validation
+- [Winston](https://github.com/winstonjs/winston) — logging
+
+## Getting started
+
+1. Copy `.env.example` to `.env` and fill in:
+   - `BOT_TOKEN` — from [@BotFather](https://t.me/BotFather)
+   - `DEEPSEEK_API_KEY` — from the DeepSeek platform
+2. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+3. Start Redis (required for the job queue):
+
+   ```bash
+   docker compose up -d redis
+   ```
+
+4. Run the bot:
+
+   ```bash
+   npm start
+   ```
+
+   Or with auto-reload during development:
+
+   ```bash
+   npm run dev
+   ```
+
+## Tests
+
+```bash
+npm test
+```
+
+Uses Node's built-in test runner (`node:test`) — no extra dependencies. Every test file spins up its own throwaway SQLite database in the OS temp dir and stubs the DeepSeek/Telegram network calls, so the suite needs no real credentials, Redis, or network access, and is safe to run repeatedly. Covers the database layer, digest caching/invalidation, the free-vs-premium gating rules (daily limit, lookback cap, group-count limit) exercised through the real command handlers, the scheduler's due-digest logic including subscription lapse handling, the analytics event log including the paywall→purchase conversion calculation and the `/stats` admin gate, and the localization layer (locale key parity, placeholder parity, and menu-button detection).
+
+## CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request:
+
+- **Tests** on Node 22.x and 24.x. 22.x is what the Dockerfile runs; 24.x is there to catch breakage early as `node:sqlite` graduates out of experimental.
+- **Docker build**, which also asserts the image runs as the non-root `node` user and that no `.env` was baked into it — a `.dockerignore` regression would otherwise silently ship secrets into an image layer.
+
+The test job deliberately needs **no secrets**: no `BOT_TOKEN`, no `DEEPSEEK_API_KEY`, no Redis, no network. If it ever starts requiring one, that means a stub has stopped covering a real call.
+
+Note that `.gitattributes` forces LF line endings. This is load-bearing rather than cosmetic: the repo is developed on Windows, and a multi-line `run: |` block checked out with CRLF fails on a Linux runner with `$'\r': command not found`.
+
+## Running with Docker Compose
+
+```bash
+docker compose up -d --build
+```
+
+This starts Redis and the bot together. The SQLite database is persisted to `./data/bot.db` on the host.
+
+**Production hardening in place** (all verified against a real build/run, not just reviewed):
+
+- The image runs as the non-root `node` user, installs via `npm ci` for reproducible builds, and `.dockerignore` keeps `.env`, `node_modules`, `test/`, and `.git` out of the build context entirely — a local `.env` sitting next to the Dockerfile can never end up baked into an image layer.
+- `NODE_ENV` is forced to `production` in `docker-compose.yml` regardless of what your local `.env` says, so logs are always structured JSON (winston) rather than the dev-friendly colorized format.
+- Since this bot has no HTTP server (long-polling only), Docker can't health-check a port. Instead the running process touches a heartbeat file every 30s (`src/utils/heartbeat.js`), and `healthcheck.js` is what Docker's `HEALTHCHECK` actually runs — `docker compose ps` will show `unhealthy` if the event loop ever wedges without crashing outright, not just if the process exits.
+- `redis`'s own healthcheck gates the bot's startup (`depends_on: condition: service_healthy`) — the bot won't start racing against a Redis that's still booting.
+- `stop_grace_period: 15s` gives BullMQ's worker shutdown and Telegraf's polling stop room to finish cleanly on `docker compose stop`/`down` before Docker sends `SIGKILL`.
+
+**Known caveat — bind-mount permissions on Linux hosts**: `./data` is bind-mounted into the container so `bot.db` stays accessible on the host. On Docker Desktop (Windows/Mac) this "just works" because of how those platforms translate bind-mount permissions. On a native Linux host, if `./data` doesn't already exist (or is owned by root) before the first `docker compose up`, the non-root container user (`node`, uid 1000) may not be able to write to it. Fix once, before first run:
+
+```bash
+mkdir -p data && sudo chown 1000:1000 data
+```
+
+**Backups**: the SQLite database is the only copy of your data — there's no replication. Since it runs in WAL mode, a plain file copy of `bot.db` alone can miss data still sitting in `bot.db-wal`. Take a consistent backup without stopping the bot using SQLite's own `VACUUM INTO` (verified working):
+
+```bash
+docker compose exec bot node -e "const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync('./data/bot.db'); db.exec(\"VACUUM INTO './data/backup.db'\"); db.close();"
+```
+
+or simply stop the bot briefly and copy `bot.db`, `bot.db-wal`, and `bot.db-shm` together.
+
+## Deploying to a server
+
+### First-time setup
+
+1. **Provision** a small Linux VPS (1 vCPU / 1 GB RAM is plenty — the workload is one Node process plus Redis) and install Docker with the Compose plugin.
+
+2. **Copy the project** across (`git clone`, or `rsync` the directory excluding `node_modules` and `data`).
+
+3. **Create the data directory with the right owner** — do this *before* the first `docker compose up`, or the non-root container user won't be able to write to it:
+
+   ```bash
+   mkdir -p data && sudo chown 1000:1000 data
+   ```
+
+4. **Create `.env`** from `.env.example` and fill in `BOT_TOKEN`, `DEEPSEEK_API_KEY`, and `ADMIN_USER_IDS` (your own Telegram user ID, so `/stats` works). Lock it down: `chmod 600 .env`.
+
+5. **Configure the bot in [@BotFather](https://t.me/BotFather)**:
+   - `/setprivacy` → **Disable** (required — without it the bot can't see group messages)
+   - `/setcommands` — paste the list below so commands autocomplete for users
+   - `/setdescription` and `/setabouttext` — mention that the bot reads group messages, and link your privacy policy
+
+   ```
+   start - Get started and see the main menu
+   summary - AI summary of recent group activity
+   find - Search past messages
+   filter - Choose keywords to highlight
+   digest - Set up a daily digest (premium)
+   subscribe - Unlock premium features
+   language - Change language / Сменить язык
+   privacy - What I store and how to delete it
+   forgetme - Delete my stored data
+   ```
+
+   BotFather also supports per-language command lists — you can repeat `/setcommands` with the Russian locale selected to give Russian-language clients localized command descriptions.
+
+6. **Start it**:
+
+   ```bash
+   docker compose up -d --build
+   docker compose ps          # both services should read (healthy)
+   docker compose logs -f bot
+   ```
+
+`restart: unless-stopped` is already set on both services, so they come back automatically after a reboot or crash.
+
+### Updating
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+The bot handles `SIGTERM` cleanly and schema migrations run automatically at startup, so this is a safe in-place update. Take a backup first (see above) if the release touches the schema.
+
+### Verifying a deploy
+
+```bash
+docker compose ps                                    # both (healthy)
+docker compose logs bot | grep "Bot launched"        # confirms Telegram connection
+docker compose exec redis redis-cli ZRANGE bull:scheduler-jobs:repeat 0 -1 WITHSCORES
+```
+
+The last command should print a timestamp for the next top-of-the-hour tick — that job drives both scheduled digests and the retention sweep, so if it's missing, neither will run.
+
+### Operational notes
+
+- **Logs** are written to stdout and captured by Docker's json-file driver, which grows without bound by default. Cap it in `/etc/docker/daemon.json` (`"log-driver": "json-file", "log-opts": {"max-size": "10m", "max-file": "3"}`) and restart Docker, or logs will eventually fill the disk.
+- **Backups** should be automated — a daily cron running the `VACUUM INTO` command above, copied off the box. The SQLite file is the only copy of your data.
+- **Redis** holds only the job queue, not durable product data. Losing it costs you the repeatable-job registration, which is re-created on the next bot start.
+- **Monitoring**: the healthcheck marks the container unhealthy if the heartbeat goes stale, but nothing acts on that by itself. For real alerting, watch `docker inspect --format '{{.State.Health.Status}}'` from an external uptime check, or add a restart policy watcher.
+
+## Project structure
+
+```
+healthcheck.js        Standalone script run by Docker's HEALTHCHECK (checks heartbeat freshness)
+src/
+├── bot.js            Bot initialization & launch
+├── config.js         Environment variables
+├── commands/         Command handlers (start, summary, find, filter, subscribe, digest, stats, privacy, language)
+├── locales/           Translations (en, ru)
+├── keyboards/         Inline/reply keyboards
+├── middleware/        Auth, request logging, rate limiting, group message ingestion
+├── services/           DeepSeek client, SQLite database, BullMQ queue + hourly digest scheduler, Telegram Stars payments, analytics event log
+├── models/             Zod schemas
+└── utils/              Logger, formatting helpers, heartbeat writer, i18n
+```
+
+## Telegram Stars payments
+
+Subscriptions use Telegram's native Stars payments (currency `XTR`), so no external payment provider or `provider_token` is required. Plans are defined in [`src/models/subscription.js`](src/models/subscription.js).

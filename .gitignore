@@ -1,0 +1,13 @@
+node_modules/
+.env
+
+# Runtime data: the SQLite database, its WAL/SHM sidecars, backups, and the
+# healthcheck heartbeat. Nothing in here should ever be committed — it contains
+# real users' message content.
+data/
+
+*.log
+npm-debug.log*
+
+# Machine-local editor/agent settings
+.claude/settings.local.json
