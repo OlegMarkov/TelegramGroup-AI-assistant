@@ -11,3 +11,7 @@ npm-debug.log*
 
 # Machine-local editor/agent settings
 .claude/settings.local.json
+
+# Database snapshots written by deploy/backup.sh on the server. Ignored so a
+# `git clean` can't delete them and they don't clutter `git status`.
+backups/
