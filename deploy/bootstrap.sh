@@ -24,7 +24,15 @@ apt-get upgrade -y -qq
 echo "==> Installing prerequisites"
 # sqlite3 is not needed by the app (it uses node:sqlite), but backup.sh uses it
 # to verify each backup with PRAGMA integrity_check before pruning older ones.
-apt-get install -y -qq ca-certificates curl gnupg git ufw unattended-upgrades sqlite3
+# cron is not present on minimal Ubuntu cloud images and is needed to schedule
+# that backup.
+apt-get install -y -qq ca-certificates curl gnupg git ufw unattended-upgrades sqlite3 cron
+systemctl enable --now cron
+
+# Servers should run UTC: it removes DST shifts from scheduled jobs, and the
+# bot already logs and schedules digests in UTC, so this keeps operator-facing
+# timestamps consistent with what the app reports.
+timedatectl set-timezone UTC || true
 
 echo "==> Installing Docker Engine + compose plugin"
 if ! command -v docker >/dev/null 2>&1; then

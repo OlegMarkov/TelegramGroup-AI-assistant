@@ -138,10 +138,24 @@ Uses `VACUUM INTO`, which snapshots a live WAL-mode database consistently. A
 plain `cp` of `bot.db` is **not** safe — recent writes may still be in
 `bot.db-wal` and would be silently missing.
 
-Schedule it (`crontab -e` as `deploy`):
+Schedule it (`crontab -e` as `deploy`). Use an absolute path — cron runs with a
+minimal environment and no shell expansion of `~`:
 
 ```
-0 3 * * * cd ~/TelegramGroup-AI-assistant && ./deploy/backup.sh >> ~/backup.log 2>&1
+0 3 * * * cd /home/deploy/TelegramGroup-AI-assistant && ./deploy/backup.sh >> /home/deploy/backup.log 2>&1
+```
+
+`bootstrap.sh` installs and enables `cron` and sets the clock to UTC, since
+minimal Ubuntu cloud images ship without cron and often default to a timezone
+with DST — which would silently shift this job by an hour twice a year.
+
+To confirm cron actually fires for the `deploy` user (worth doing once, since
+a cron job that never runs looks identical to one that runs successfully):
+
+```bash
+(crontab -l; echo "* * * * * date -u > ~/.cron-alive") | crontab -
+# wait ~70s, then:
+cat ~/.cron-alive && crontab -l | grep -v cron-alive | crontab -
 ```
 
 These copies sit on the same server, which protects against a bad deploy but
