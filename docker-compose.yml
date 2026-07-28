@@ -1,11 +1,25 @@
+x-logging: &default-logging
+  # Docker's json-file driver grows without bound by default, which will
+  # eventually fill a small VPS disk. Cap it per container.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # Bound to loopback deliberately. The bot reaches Redis over the internal
+    # Docker network as `redis:6379` and does NOT need this published port —
+    # it exists only for host-side debugging. Publishing it as "6379:6379"
+    # binds all interfaces, which on a public VPS exposes an unauthenticated
+    # Redis to the internet (a heavily scanned, trivially exploited target).
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -28,6 +42,7 @@ services:
       NODE_ENV: production
     volumes:
       - ./data:/app/data
+    logging: *default-logging
     # BullMQ worker close() + Telegraf's polling stop need a moment; the
     # Docker default (10s) can cut that close under load.
     stop_grace_period: 15s
