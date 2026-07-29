@@ -1,7 +1,7 @@
 const config = require('../config');
 const { getUserDataSummary, deleteUserData } = require('../services/database');
 const { formatDate } = require('../utils/formatters');
-const { t } = require('../utils/i18n');
+const { t, allTranslations } = require('../utils/i18n');
 const logger = require('../utils/logger');
 
 async function privacyHandler(ctx) {
@@ -76,6 +76,7 @@ async function cancelCallback(ctx) {
 
 module.exports = (bot) => {
   bot.command('privacy', privacyHandler);
+  bot.hears(allTranslations('menu.privacy'), privacyHandler);
   bot.command('forgetme', forgetMeHandler);
   bot.action(/^privacy:forget:(\d+)$/, forgetConfirmCallback);
   bot.action('privacy:cancel', cancelCallback);

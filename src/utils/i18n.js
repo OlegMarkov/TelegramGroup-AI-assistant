@@ -40,7 +40,18 @@ function allTranslations(key) {
   return [...new Set(SUPPORTED_LANGUAGES.map((lang) => t(lang, key)))];
 }
 
-const MENU_KEYS = ['menu.summary', 'menu.find', 'menu.filters', 'menu.digest', 'menu.subscribe'];
+// Every reply-keyboard button, in the order they appear in mainMenu().
+// Adding a button WITHOUT listing it here means a tap on it inside a group is
+// stored as conversation and ends up in summaries — keep the two in sync.
+const MENU_KEYS = [
+  'menu.summary',
+  'menu.find',
+  'menu.filters',
+  'menu.digest',
+  'menu.subscribe',
+  'menu.language',
+  'menu.privacy',
+];
 
 const MENU_BUTTON_TEXTS = new Set(MENU_KEYS.flatMap((key) => allTranslations(key)));
 
@@ -68,6 +79,7 @@ module.exports = {
   allTranslations,
   isMenuButtonText,
   normalizeLanguage,
+  MENU_KEYS,
   SUPPORTED_LANGUAGES,
   DEFAULT_LANGUAGE,
 };

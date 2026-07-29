@@ -7,6 +7,7 @@ function mainMenu(lang) {
     [t(lang, 'menu.summary'), t(lang, 'menu.find')],
     [t(lang, 'menu.filters'), t(lang, 'menu.digest')],
     [t(lang, 'menu.subscribe')],
+    [t(lang, 'menu.language'), t(lang, 'menu.privacy')],
   ]).resize();
 }
 

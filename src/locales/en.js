@@ -9,6 +9,8 @@ module.exports = {
     filters: '🎯 Filters',
     digest: '📅 Digest',
     subscribe: '⭐ Subscribe',
+    language: '🌐 Language',
+    privacy: '🔒 Privacy',
   },
 
   common: {

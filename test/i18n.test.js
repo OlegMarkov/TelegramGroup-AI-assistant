@@ -15,9 +15,11 @@ const {
   allTranslations,
   isMenuButtonText,
   normalizeLanguage,
+  MENU_KEYS,
   SUPPORTED_LANGUAGES,
   DEFAULT_LANGUAGE,
 } = require('../src/utils/i18n');
+const { mainMenu } = require('../src/keyboards');
 const en = require('../src/locales/en');
 const ru = require('../src/locales/ru');
 const db = require('../src/services/database');
@@ -83,10 +85,27 @@ test('allTranslations returns every language variant, for reply-keyboard matchin
   assert.ok(variants.includes(ru.menu.summary));
 });
 
+test('every button actually rendered in the menu is recognised by isMenuButtonText', () => {
+  // Guards the real failure mode: adding a button to mainMenu() but forgetting
+  // MENU_KEYS, so a tap on it inside a group is stored as conversation and
+  // pollutes summaries. Derived from the rendered keyboard, not a hardcoded
+  // list, so it fails automatically if the two ever drift.
+  for (const lang of SUPPORTED_LANGUAGES) {
+    const rows = mainMenu(lang).reply_markup.keyboard;
+    const rendered = rows.flat().map((b) => (typeof b === 'string' ? b : b.text));
+    assert.ok(rendered.length > 0, 'menu should render buttons');
+
+    for (const label of rendered) {
+      assert.ok(
+        isMenuButtonText(label),
+        `"${label}" (${lang}) is in the menu but not in MENU_KEYS — a tap on it in a group would be stored as a message`
+      );
+    }
+  }
+});
+
 test('isMenuButtonText recognises reply-keyboard labels in every language', () => {
-  // Reply-keyboard taps arrive as plain text messages, so without this the
-  // button label gets stored as group conversation and pollutes summaries.
-  for (const key of ['menu.summary', 'menu.find', 'menu.filters', 'menu.digest', 'menu.subscribe']) {
+  for (const key of MENU_KEYS) {
     for (const lang of SUPPORTED_LANGUAGES) {
       assert.ok(isMenuButtonText(t(lang, key)), `"${t(lang, key)}" (${lang}, ${key}) should be treated as a button`);
     }

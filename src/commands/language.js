@@ -1,6 +1,6 @@
 const { setUserLanguage } = require('../services/database');
 const { mainMenu } = require('../keyboards');
-const { t, SUPPORTED_LANGUAGES } = require('../utils/i18n');
+const { t, allTranslations, SUPPORTED_LANGUAGES } = require('../utils/i18n');
 
 function languageMenu(currentLang) {
   const buttons = SUPPORTED_LANGUAGES.map((lang) => [
@@ -36,5 +36,6 @@ async function languageSetCallback(ctx) {
 
 module.exports = (bot) => {
   bot.command('language', languageHandler);
+  bot.hears(allTranslations('menu.language'), languageHandler);
   bot.action(/^language:set:(\w+)$/, languageSetCallback);
 };

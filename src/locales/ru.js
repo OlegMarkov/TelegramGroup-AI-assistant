@@ -9,6 +9,8 @@ module.exports = {
     filters: '🎯 Фильтры',
     digest: '📅 Дайджест',
     subscribe: '⭐ Подписка',
+    language: '🌐 Язык',
+    privacy: '🔒 Приватность',
   },
 
   common: {
