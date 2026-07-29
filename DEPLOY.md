@@ -158,12 +158,39 @@ a cron job that never runs looks identical to one that runs successfully):
 cat ~/.cron-alive && crontab -l | grep -v cron-alive | crontab -
 ```
 
-These copies sit on the same server, which protects against a bad deploy but
-not against losing the VPS. Pull them down periodically:
+### Off-site copies
+
+The backups above sit on the same server as the data they protect, which covers
+a bad deploy or an accidental delete but not losing the VPS itself.
+
+From a Windows machine:
 
 ```bash
-rsync -avz deploy@<server-ip>:~/TelegramGroup-AI-assistant/backups/ ./vps-backups/
+powershell -ExecutionPolicy Bypass -File deploy\pull-backups.ps1
 ```
+
+It downloads only files it doesn't already have (backup filenames are
+timestamped and immutable), verifies every bundle with `git bundle verify` and
+every database with `PRAGMA integrity_check`, and refuses to prune anything if a
+file fails — an unverified backup is not a backup. Local retention defaults to
+90 days, deliberately longer than the server's 14, because the off-site copy is
+the one that has to survive a problem noticed late.
+
+Register it to run daily:
+
+```bash
+powershell -ExecutionPolicy Bypass -Command "Register-ScheduledTask -TaskName TelegramBot-PullBackups -Action (New-ScheduledTaskAction -Execute powershell.exe -Argument '-NoProfile -ExecutionPolicy Bypass -File \"C:\path\to\deploy\pull-backups.ps1\"') -Trigger (New-ScheduledTaskTrigger -Daily -At 04:00) -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable)"
+```
+
+`-StartWhenAvailable` matters on a laptop: without it, a run missed because the
+machine was asleep is skipped entirely rather than retried.
+
+Note that **`rsync` is not present on either side** (neither Git Bash nor the
+Ubuntu image ships it), which is why this uses `scp`. At ~85 KB per file the
+lack of delta transfer is irrelevant.
+
+To restore, see the bottom of `deploy/backup.sh` — `git clone` a bundle for the
+source, and copy a `backup-*.db` over `data/bot.db` with the bot stopped.
 
 ## What "healthy" means
 
