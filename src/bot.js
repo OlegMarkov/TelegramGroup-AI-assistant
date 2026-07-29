@@ -68,12 +68,33 @@ async function handleMyChatMemberUpdate(ctx) {
   }
 }
 
+/**
+ * Is the Telegram polling loop still running?
+ *
+ * Telegraf's Polling.loop() aborts its AbortController in a `finally` block, so
+ * the signal flips whenever polling ends for any reason — clean stop, thrown
+ * error, or the iterator completing. That makes it a trustworthy liveness
+ * signal, at the cost of reaching into library internals.
+ *
+ * Deliberately fails OPEN: if a future Telegraf version reshapes this, we
+ * report alive rather than flapping the container into a restart loop. The
+ * "launch() resolved unexpectedly" check in main() still catches the real
+ * failure independently of these internals.
+ */
+function isPollingAlive() {
+  const polling = bot.polling;
+  if (!polling) return true; // not launched yet — don't suppress the first beat
+  return polling.abortController?.signal?.aborted !== true;
+}
+
 async function main() {
   const worker = startWorker();
   const schedulerWorker = startScheduler();
   let stopHeartbeat = () => {};
+  let shuttingDown = false;
 
   const shutdown = (signal) => async () => {
+    shuttingDown = true;
     logger.info(`Received ${signal}, shutting down...`);
     stopHeartbeat();
     bot.stop(signal);
@@ -89,10 +110,24 @@ async function main() {
 
   await bot.launch({}, () => {
     logger.info(`Bot launched as @${bot.botInfo.username}`);
-    // Written periodically so Docker's HEALTHCHECK (healthcheck.js) can tell
-    // the process is alive and pumping updates, not just still running.
-    stopHeartbeat = startHeartbeat(heartbeatPath);
+    // Telegraf aborts this signal when the polling loop ends, so it is the
+    // closest thing to a real "am I still listening to Telegram?" check.
+    // Gating the heartbeat on it means a bot that has stopped consuming
+    // updates goes unhealthy instead of silently looking fine.
+    stopHeartbeat = startHeartbeat(heartbeatPath, { isAlive: isPollingAlive });
   });
+
+  // In polling mode bot.launch() only resolves once polling has stopped. If we
+  // reach here without a shutdown having been requested, the poller died on its
+  // own: the process would otherwise stay alive (Redis connections hold the
+  // event loop open) as a bot that answers nobody. Exit loudly so Docker's
+  // restart policy brings it back.
+  if (!shuttingDown) {
+    logger.error('Telegram polling stopped unexpectedly — exiting so the container restarts');
+    stopHeartbeat();
+    await Promise.all([worker.close(), schedulerWorker.close()]).catch(() => {});
+    process.exit(1);
+  }
 }
 
 main().catch((error) => {

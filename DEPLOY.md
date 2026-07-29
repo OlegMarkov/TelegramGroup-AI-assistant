@@ -165,6 +165,27 @@ not against losing the VPS. Pull them down periodically:
 rsync -avz deploy@<server-ip>:~/TelegramGroup-AI-assistant/backups/ ./vps-backups/
 ```
 
+## What "healthy" means
+
+`docker compose ps` reporting `healthy` means the bot is **still consuming
+Telegram updates**, not merely that the process exists.
+
+The bot refreshes a heartbeat file every 30s, but only while Telegraf's polling
+loop is running; `healthcheck.js` fails once that file is more than 90s old. If
+polling stops, two things happen: the heartbeat goes stale (container reports
+unhealthy) and the process exits non-zero, so `restart: unless-stopped` brings
+it back automatically.
+
+This distinction matters because the earlier heartbeat fired on a plain timer,
+which meant a bot that had silently stopped receiving updates looked exactly
+like a healthy bot with no traffic.
+
+Residual gap worth knowing: this detects a poller that has **stopped**, not one
+that is **wedged** mid-request without ever returning. If users report silence
+while the container claims healthy, compare `docker compose logs bot` against
+Telegram — a bot that is genuinely polling logs `Handled …` lines as traffic
+arrives.
+
 ## Security notes
 
 - **Redis is bound to `127.0.0.1`** in `docker-compose.yml`, and the bot
