@@ -1,5 +1,12 @@
 const logger = require('../utils/logger');
-const { logEvent, getEventCounts, getDistinctEventUsers } = require('./database');
+const {
+  logEvent,
+  getEventCounts,
+  getDistinctEventUsers,
+  getRetentionCurve,
+  getWeeklyCohorts,
+  getDailyActiveUsers,
+} = require('./database');
 
 const EVENTS = {
   USER_STARTED: 'user_started',
@@ -52,4 +59,12 @@ function getFunnelReport(sinceDays) {
   };
 }
 
-module.exports = { EVENTS, track, getFunnelReport };
+function getRetentionReport({ cohortWeeks = 6, activeDays = 14 } = {}) {
+  return {
+    curve: getRetentionCurve([1, 7, 30]),
+    cohorts: getWeeklyCohorts(cohortWeeks),
+    dailyActive: getDailyActiveUsers(activeDays),
+  };
+}
+
+module.exports = { EVENTS, track, getFunnelReport, getRetentionReport };

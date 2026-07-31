@@ -56,6 +56,66 @@ test('getFunnelReport computes paywall -> purchase conversion correctly', () => 
   assert.equal(report.totalPurchasers, 2, 'users 501 and 503 both purchased');
 });
 
+test('retention excludes users too new to have qualified', () => {
+  // The trap: a user who signed up an hour ago cannot have 7-day retention
+  // yet. Counting them in the denominator makes every new signup look like
+  // churn, so growth would read as a retention collapse.
+  db.db.prepare("INSERT INTO users (id, first_name, created_at) VALUES (800, 'Old', datetime('now','-40 days'))").run();
+  db.db.prepare("INSERT INTO users (id, first_name, created_at) VALUES (801, 'New', datetime('now','-1 hours'))").run();
+
+  // The old user came back on day 10 — retained at D1 and D7, not at D30.
+  db.db
+    .prepare("INSERT INTO events (user_id, event_type, created_at) VALUES (800, 'summary_requested', datetime('now','-30 days'))")
+    .run();
+  // The brand-new user has done nothing since joining.
+
+  const curve = db.getRetentionCurve([1, 7, 30]);
+  const byDay = Object.fromEntries(curve.map((c) => [c.days, c]));
+
+  assert.equal(byDay[1].eligible, 1, 'only the 40-day-old user is eligible for D1; the 1-hour-old user is not');
+  assert.equal(byDay[1].retained, 1, 'the old user acted 10 days after joining, so counts as retained');
+
+  assert.equal(byDay[30].eligible, 1, 'the old user is eligible for D30');
+  assert.equal(byDay[30].retained, 0, 'their only activity was on day 10, before the D30 threshold');
+
+  assert.equal(byDay[1].pct, 100);
+  assert.equal(byDay[30].pct, 0);
+});
+
+test('retention reports null rather than 0% when nobody is eligible yet', () => {
+  // Distinguishing "no data" from "0% retention" matters: the first is normal
+  // for a young product, the second means users are leaving.
+  const [d] = db.getRetentionCurve([3650]); // nobody is 10 years old
+  assert.equal(d.eligible, 0);
+  assert.equal(d.pct, null, 'no eligible users must not be reported as 0% retention');
+});
+
+test('weekly cohorts group users by signup week with per-cohort retention', () => {
+  const cohorts = db.getWeeklyCohorts(8);
+  assert.ok(cohorts.length > 0);
+
+  for (const c of cohorts) {
+    assert.match(c.cohort_start, /^\d{4}-\d{2}-\d{2}$/, 'cohort key should be the Monday of that week');
+    assert.ok(c.size > 0);
+    assert.ok(c.retained_d1 <= c.eligible_d1, 'retained can never exceed the eligible denominator');
+    assert.ok(c.retained_d7 <= c.eligible_d7);
+    assert.ok(c.eligible_d1 <= c.size, 'eligible can never exceed cohort size');
+  }
+});
+
+test('getDailyActiveUsers counts distinct users per day and ignores anonymized events', () => {
+  db.db.prepare("INSERT INTO events (user_id, event_type, created_at) VALUES (NULL, 'summary_requested', datetime('now'))").run();
+  const daily = db.getDailyActiveUsers(14);
+
+  for (const row of daily) {
+    assert.ok(row.active_users >= 0);
+    assert.ok(row.events >= row.active_users, 'a user can generate several events in a day');
+  }
+  // A /forgetme-anonymized event still counts as activity but has no user.
+  const today = daily.find((r) => r.day === new Date().toISOString().slice(0, 10));
+  if (today) assert.ok(today.events > 0);
+});
+
 test('/stats replies for an admin and stays silent for a non-admin', async () => {
   db.getOrCreateUser({ id: 900, username: 'admin', firstName: 'Admin' });
   db.getOrCreateUser({ id: 901, username: 'regular', firstName: 'Regular' });

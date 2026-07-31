@@ -485,6 +485,88 @@ function getDistinctEventUsers(eventTypes, sinceDays) {
     .map((r) => r.user_id);
 }
 
+/**
+ * Rolling retention: of users who joined at least N days ago, how many did
+ * anything at all on or after (join date + N days).
+ *
+ * The `eligible` filter is the part that's easy to get wrong. A user who signed
+ * up yesterday cannot possibly have 7-day retention yet, so counting them in
+ * the denominator would drag D7 down every time you acquire new users — making
+ * growth look like churn. Only users who have actually had the chance to return
+ * are counted.
+ */
+function getRetentionCurve(dayOffsets = [1, 7, 30]) {
+  const stmt = db.prepare(
+    `SELECT
+       COUNT(*) AS eligible,
+       COALESCE(SUM(CASE WHEN EXISTS (
+         SELECT 1 FROM events e
+         WHERE e.user_id = u.id
+           AND e.created_at >= datetime(u.created_at, ?)
+       ) THEN 1 ELSE 0 END), 0) AS retained
+     FROM users u
+     WHERE u.created_at <= datetime('now', ?)`
+  );
+
+  return dayOffsets.map((days) => {
+    const row = stmt.get(`+${days} days`, `-${days} days`);
+    const eligible = row ? row.eligible : 0;
+    const retained = row ? row.retained : 0;
+    return {
+      days,
+      eligible,
+      retained,
+      pct: eligible > 0 ? (retained / eligible) * 100 : null,
+    };
+  });
+}
+
+/**
+ * Weekly signup cohorts with rolling retention per cohort.
+ *
+ * Cohorts are keyed by the Monday of the week a user first appeared, so you can
+ * see whether newer cohorts retain better than older ones — the signal that
+ * tells you a product change worked, which a single blended number hides.
+ */
+function getWeeklyCohorts(limitWeeks = 8) {
+  return db
+    .prepare(
+      `SELECT
+         date(u.created_at, 'weekday 0', '-6 days') AS cohort_start,
+         COUNT(*) AS size,
+         COALESCE(SUM(CASE WHEN u.created_at <= datetime('now', '-1 days') THEN 1 ELSE 0 END), 0) AS eligible_d1,
+         COALESCE(SUM(CASE WHEN u.created_at <= datetime('now', '-7 days') THEN 1 ELSE 0 END), 0) AS eligible_d7,
+         COALESCE(SUM(CASE WHEN u.created_at <= datetime('now', '-1 days') AND EXISTS (
+           SELECT 1 FROM events e WHERE e.user_id = u.id
+             AND e.created_at >= datetime(u.created_at, '+1 days')
+         ) THEN 1 ELSE 0 END), 0) AS retained_d1,
+         COALESCE(SUM(CASE WHEN u.created_at <= datetime('now', '-7 days') AND EXISTS (
+           SELECT 1 FROM events e WHERE e.user_id = u.id
+             AND e.created_at >= datetime(u.created_at, '+7 days')
+         ) THEN 1 ELSE 0 END), 0) AS retained_d7
+       FROM users u
+       GROUP BY cohort_start
+       ORDER BY cohort_start DESC
+       LIMIT ?`
+    )
+    .all(limitWeeks);
+}
+
+/** Distinct users who did anything on each of the last N days. */
+function getDailyActiveUsers(days = 14) {
+  return db
+    .prepare(
+      `SELECT date(created_at) AS day,
+              COUNT(DISTINCT user_id) AS active_users,
+              COUNT(*) AS events
+       FROM events
+       WHERE user_id IS NOT NULL AND created_at >= datetime('now', ?)
+       GROUP BY day
+       ORDER BY day DESC`
+    )
+    .all(`-${days} days`);
+}
+
 function createSubscription({ userId, plan, starsPaid, telegramChargeId, expiresAt }) {
   const result = db
     .prepare(
@@ -540,6 +622,9 @@ module.exports = {
   logEvent,
   getEventCounts,
   getDistinctEventUsers,
+  getRetentionCurve,
+  getWeeklyCohorts,
+  getDailyActiveUsers,
   createSubscription,
   getActiveSubscription,
 };
