@@ -1,5 +1,6 @@
 const { Markup } = require('telegraf');
 const { SUBSCRIPTION_PLANS } = require('../models/subscription');
+const { FILTER_CATEGORIES } = require('../services/filterMatcher');
 const { t } = require('../utils/i18n');
 
 function mainMenu(lang) {
@@ -24,11 +25,6 @@ function subscriptionMenu(lang) {
   );
   return Markup.inlineKeyboard(buttons, { columns: 1 });
 }
-
-// Category keys are stored in the database and used for keyword matching, so
-// they stay English — only the button label is translated. Switching language
-// must not silently drop a user's saved filters.
-const FILTER_CATEGORIES = ['Tech', 'Business', 'Science', 'World', 'Sports'];
 
 function filterCategoriesMenu(lang, selectedCategories = []) {
   const buttons = FILTER_CATEGORIES.map((category) => {

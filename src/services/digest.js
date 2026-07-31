@@ -1,5 +1,6 @@
 const { getRecentMessages, getUserFilters, getCachedDigestSummary, setCachedDigestSummary } = require('./database');
 const { summarize } = require('./deepseek');
+const { buildFilterMatcher } = require('./filterMatcher');
 const { truncate } = require('../utils/formatters');
 const { t, DEFAULT_LANGUAGE } = require('../utils/i18n');
 const logger = require('../utils/logger');
@@ -33,11 +34,11 @@ async function generateDigest(chatId, userId, hours, lang = DEFAULT_LANGUAGE) {
   // Highlights depend on the requesting user's own filters, so they're
   // always computed fresh — only the DeepSeek call itself is cached.
   const filters = getUserFilters(userId);
-  const highlightTerms = [...filters.keywords, ...filters.categories].map((term) => term.toLowerCase());
+  const matchesFilters = buildFilterMatcher(filters);
 
   let highlightBlock = '';
-  if (highlightTerms.length > 0) {
-    const matches = messages.filter((m) => highlightTerms.some((term) => m.text.toLowerCase().includes(term)));
+  if (matchesFilters) {
+    const matches = messages.filter((m) => matchesFilters(m.text));
     if (matches.length > 0) {
       const lines = matches.slice(0, 10).map((m) => `• ${m.username || 'someone'}: ${truncate(m.text, 150)}`);
       highlightBlock = `\n\n${t(lang, 'summary.highlightsHeader')}\n${lines.join('\n')}`;
