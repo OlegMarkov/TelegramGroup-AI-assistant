@@ -7,6 +7,7 @@ module.exports = {
     summary: '📝 Summary',
     find: '🔎 Find',
     filters: '🎯 Filters',
+    channels: '📢 Channels',
     digest: '📅 Digest',
     subscribe: '⭐ Subscribe',
     language: '🌐 Language',
@@ -28,6 +29,7 @@ module.exports = {
       '📝 /summary [hours] — AI summary of recent activity (free: {freeSummaries}/day, up to {freeHours}h)\n' +
       "🔎 /find <query> — search that group's message history\n" +
       '🎯 /filter — pick keywords/topics to get highlighted in summaries\n' +
+      '📢 /channels — premium: summarize public channels you follow\n' +
       '📅 /digest — premium: automatic daily digest sent to your DM\n' +
       '⭐ /subscribe — unlimited summaries, longer lookback, and daily digests\n' +
       '🌐 /language — change language\n' +
@@ -90,6 +92,38 @@ module.exports = {
       World: 'World',
       Sports: 'Sports',
     },
+  },
+
+  channel: {
+    premiumOnly:
+      '⭐ *Channel summaries are a premium feature.*\n\n' +
+      'Follow public Telegram channels and get the same AI summaries you get for your groups — ' +
+      'without reading every post.\n\n' +
+      '/subscribe to unlock, then add channels with `/addchannel @name`.',
+    usage: 'Usage: `/addchannel @channelname`',
+    removeUsage: 'Usage: `/removechannel @channelname`',
+    invalidHandle:
+      "That doesn't look like a channel username. Use the @name from the channel's profile, " +
+      'for example `/addchannel @durov`.',
+    checking: 'Checking @{handle}…',
+    unavailable:
+      "I can't read *@{handle}*.\n\n" +
+      'I can only summarize **public** channels — ones with a @name that anyone can open. ' +
+      'Private channels, invite-only groups and user accounts are out of reach.',
+    checkFailed: "Couldn't reach Telegram to check that channel. Please try again in a minute.",
+    added:
+      '✅ Added *{title}* (@{handle}).\n\n' +
+      'Run /summary and pick it from the list, or set up a daily /digest for it.',
+    alreadyAdded: "You're already following @{handle}.",
+    limitReached:
+      "You're following the maximum of {max} channels. Remove one with `/removechannel @name` first.",
+    removed: '✅ Removed @{handle}.',
+    notFollowing: "You're not following @{handle}.",
+    empty:
+      "📢 You're not following any channels yet.\n\n" +
+      'Add one with `/addchannel @name` — any public channel works, for example `/addchannel @durov`.',
+    listHeader: '📢 *Channels you follow*',
+    listHint: 'Add with `/addchannel @name`, remove with `/removechannel @name`.',
   },
 
   digest: {

@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 2026-07-26_
+_Last updated: 2026-08-06_
 
 This policy describes what the Telegram Assistant Bot ("the bot") collects, why, and how to remove it. It describes the behaviour actually implemented in this codebase — the retention periods below are enforced automatically by a scheduled job, not just stated here.
 
@@ -11,6 +11,13 @@ When the bot is a member of a group chat:
 - **Text messages** sent in that group — the message text, the sender's Telegram display name/username, the message ID, and the timestamp.
 - **Group metadata** — the group's ID, title, and type.
 - **Membership** — which users have been seen active in which groups, so they can request summaries of those groups.
+
+For public channels a user adds with `/addchannel`:
+
+- **The channel's public username and title**, and which users follow it through the bot.
+- **Nothing else.** Channel posts are fetched from the channel's own public web page at the moment a summary is requested, summarized, and discarded. Post text is never written to the database and therefore never appears in backups. Only the generated summary is cached.
+
+Only **public** channels can be added — ones with a `@name` that anyone can open without joining. The bot has no access to private channels, and reads nothing through any user's Telegram account.
 
 For users who interact with the bot directly:
 
@@ -33,6 +40,8 @@ Message text is stored solely to produce the product's core features: AI-generat
 ## Third parties
 
 Message text is transmitted to the **DeepSeek API** to generate summaries. This is the only third party that receives message content, and it receives it only at the moment a summary is generated. See DeepSeek's own terms for how they handle API data.
+
+The same applies to posts from public channels a user has added: they are sent to DeepSeek to be summarized at request time. Requests to fetch those posts go to Telegram's own public web preview and carry no information about which user asked.
 
 Generated summaries are cached so repeated requests don't re-send the same content.
 

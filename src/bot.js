@@ -38,7 +38,7 @@ bot.catch((err, ctx) => {
 });
 
 function registerCommands(instance) {
-  ['start', 'summary', 'find', 'filter', 'subscribe', 'digest', 'stats', 'privacy', 'language'].forEach((name) => {
+  ['start', 'summary', 'find', 'filter', 'channel', 'subscribe', 'digest', 'stats', 'privacy', 'language'].forEach((name) => {
     require(`./commands/${name}`)(instance);
   });
 }

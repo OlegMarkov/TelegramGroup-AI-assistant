@@ -1,12 +1,15 @@
 const {
-  getUserChats,
+  getUserGroups,
+  getUserChannels,
   getAllowedUserChats,
+  getChatById,
   isUserLinkedToChat,
   isChatWithinFreeLimit,
   getSummaryUsageToday,
   incrementSummaryUsage,
 } = require('../services/database');
 const { generateDigest } = require('../services/digest');
+const { ChannelUnavailableError } = require('../services/channelSource');
 const { getLimits, PREMIUM_LIMITS } = require('../models/subscription');
 const { isGroupChat } = require('../utils/formatters');
 const { t, allTranslations } = require('../utils/i18n');
@@ -26,10 +29,21 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
   const requesterId = ctx.from.id;
   const lang = ctx.state.lang;
   const limits = getLimits(ctx.state.subscription);
+  const chat = getChatById(chatId);
+  const isChannel = Boolean(chat && chat.source === 'channel');
 
   track(EVENTS.SUMMARY_REQUESTED, { userId: requesterId, chatId });
 
-  if (!isChatWithinFreeLimit(requesterId, chatId, limits.maxGroups)) {
+  // Enforced here rather than only in the picker: callback_data is supplied by
+  // the client, so a user whose subscription lapsed still has working buttons
+  // for every channel they ever saw listed.
+  if (isChannel && limits.maxChannels === 0) {
+    track(EVENTS.CHANNEL_BLOCKED_PREMIUM, { userId: requesterId, chatId });
+    return ctx.reply(t(lang, 'channel.premiumOnly'), { parse_mode: 'Markdown' });
+  }
+
+  // The group quota does not apply to channels — they have their own cap.
+  if (!isChannel && !isChatWithinFreeLimit(requesterId, chatId, limits.maxGroups)) {
     track(EVENTS.SUMMARY_BLOCKED_GROUP_LIMIT, { userId: requesterId, chatId });
     return ctx.reply(t(lang, 'summary.blockedGroupLimit', { maxGroups: limits.maxGroups }));
   }
@@ -55,6 +69,10 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
   try {
     result = await generateDigest(chatId, requesterId, hours, lang);
   } catch (error) {
+    // A channel that went private or was renamed since it was added.
+    if (error instanceof ChannelUnavailableError) {
+      return ctx.reply(t(lang, 'channel.unavailable', { handle: chat.username }), { parse_mode: 'Markdown' });
+    }
     logger.error('Summary generation failed', { error: error.message });
     return ctx.reply(t(lang, 'summary.failed'));
   }
@@ -66,10 +84,17 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
   incrementSummaryUsage(requesterId);
   track(EVENTS.SUMMARY_COMPLETED, { userId: requesterId, chatId });
 
-  return ctx.reply(
-    `${t(lang, 'summary.header', { hours })}\n\n${result.summaryText}${result.highlightBlock}`,
-    { parse_mode: 'Markdown' }
-  );
+  const body = `${t(lang, 'summary.header', { hours })}\n\n${result.summaryText}${result.highlightBlock}`;
+
+  try {
+    return await ctx.reply(body, { parse_mode: 'Markdown' });
+  } catch (error) {
+    // The summary is model output shaped by content we do not control, so an
+    // unbalanced * or _ is always possible and makes Telegram reject the whole
+    // message. Delivering it unformatted beats delivering nothing.
+    logger.warn('Summary rejected with Markdown, resending as plain text', { error: error.message });
+    return ctx.reply(body);
+  }
 }
 
 async function summaryHandler(ctx) {
@@ -82,16 +107,20 @@ async function summaryHandler(ctx) {
   }
 
   const limits = getLimits(ctx.state.subscription);
-  const allChats = getUserChats(ctx.from.id);
-  const chats = getAllowedUserChats(ctx.from.id, limits.maxGroups);
+  const allGroups = getUserGroups(ctx.from.id);
+  const allowedGroups = getAllowedUserChats(ctx.from.id, limits.maxGroups);
+  // Free users keep any channels they added while subscribed, but none of them
+  // are offered until they resubscribe.
+  const channels = limits.maxChannels > 0 ? getUserChannels(ctx.from.id) : [];
+  const chats = [...allowedGroups, ...channels];
 
-  if (allChats.length === 0) {
+  if (allGroups.length === 0 && channels.length === 0) {
     return ctx.reply(t(lang, 'common.noLinkedChats'));
   }
 
-  if (chats.length < allChats.length) {
+  if (allowedGroups.length < allGroups.length) {
     await ctx.reply(
-      t(lang, 'summary.hiddenGroupsNote', { total: allChats.length, allowed: limits.maxGroups })
+      t(lang, 'summary.hiddenGroupsNote', { total: allGroups.length, allowed: limits.maxGroups })
     );
   }
 
@@ -101,7 +130,9 @@ async function summaryHandler(ctx) {
 
   const buttons = chats.map((c) => [
     {
-      text: c.title || t(lang, 'common.chatFallback', { id: c.id }),
+      // Groups and channels sit in one list, so the icon is the only thing
+      // telling the user which kind of thing they are about to summarize.
+      text: `${c.source === 'channel' ? '📢 ' : '💬 '}${c.title || t(lang, 'common.chatFallback', { id: c.id })}`,
       callback_data: `summary:chat:${c.id}:${hours}`,
     },
   ]);

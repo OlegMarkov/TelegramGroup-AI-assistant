@@ -1,4 +1,4 @@
-const { searchMessages, getUserChats, getAllowedUserChats, isChatWithinFreeLimit } = require('../services/database');
+const { searchMessages, getUserGroups, getAllowedUserChats, isChatWithinFreeLimit } = require('../services/database');
 const { getLimits } = require('../models/subscription');
 const { truncate, formatDate, isGroupChat } = require('../utils/formatters');
 const { t, allTranslations } = require('../utils/i18n');
@@ -24,7 +24,9 @@ async function findHandler(ctx) {
     }
     results = searchMessages({ chatId: ctx.chat.id, query, limit: 10 });
   } else {
-    const allChats = getUserChats(ctx.from.id);
+    // Groups only: channel posts are fetched at summary time and never stored,
+    // so there is no history here to search.
+    const allChats = getUserGroups(ctx.from.id);
     if (allChats.length === 0) {
       return ctx.reply(t(lang, 'find.noLinkedChats'));
     }

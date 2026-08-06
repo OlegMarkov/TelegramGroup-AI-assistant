@@ -47,6 +47,7 @@ const MENU_KEYS = [
   'menu.summary',
   'menu.find',
   'menu.filters',
+  'menu.channels',
   'menu.digest',
   'menu.subscribe',
   'menu.language',

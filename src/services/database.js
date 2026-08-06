@@ -138,6 +138,19 @@ function addColumnIfMissing(table, column, definition) {
 addColumnIfMissing('chats', 'deactivated_at', 'TEXT');
 addColumnIfMissing('users', 'language', 'TEXT');
 
+// 'bot'     — a group the bot was added to; messages arrive as updates.
+// 'channel' — a public channel read from its web preview at request time.
+addColumnIfMissing('chats', 'source', `TEXT NOT NULL DEFAULT 'bot'`);
+addColumnIfMissing('chats', 'username', 'TEXT');
+
+// One row per channel, no matter how many users follow it. Handles are stored
+// lowercased so @Durov and @durov cannot become two chats holding two copies
+// of the same content.
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_channel_username
+    ON chats(username) WHERE source = 'channel';
+`);
+
 logger.info(`SQLite database ready at ${dbPath}`);
 
 function getOrCreateUser({ id, username, firstName, language }) {
@@ -200,6 +213,98 @@ function deactivateChat(chatId) {
   db.prepare(`UPDATE chats SET is_active = 0, deactivated_at = datetime('now') WHERE id = ?`).run(chatId);
 }
 
+function getChatById(chatId) {
+  return db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
+}
+
+// Scraped channels have no Bot API chat id, so they need one of our own, and a
+// synthetic id that ever collided with a real chat id would serve one chat's
+// content to another chat's members — the worst bug this feature could have.
+//
+// Telegram gives groups, supergroups and channels *negative* ids, and this
+// table only ever holds those (ingestion filters on isGroupChat, so a private
+// chat's positive id never lands here). Allocating channels from a high
+// positive range therefore cannot collide by construction, not merely by luck.
+// idsAreNamespaced() is asserted in the test suite.
+const CHANNEL_ID_BASE = 1_000_000_000_000;
+
+function allocateChannelId() {
+  const row = db
+    .prepare('SELECT COALESCE(MAX(id), ?) AS max_id FROM chats WHERE id >= ?')
+    .get(CHANNEL_ID_BASE - 1, CHANNEL_ID_BASE);
+  return row.max_id + 1;
+}
+
+function getChannelByUsername(username) {
+  return db
+    .prepare(`SELECT * FROM chats WHERE source = 'channel' AND username = ?`)
+    .get(String(username).toLowerCase());
+}
+
+function getOrCreateChannel({ username, title, addedBy }) {
+  const handle = String(username).toLowerCase();
+
+  const existing = getChannelByUsername(handle);
+  if (existing) {
+    if (title && title !== existing.title) {
+      db.prepare('UPDATE chats SET title = ? WHERE id = ?').run(title, existing.id);
+    }
+    if (!existing.is_active) {
+      db.prepare('UPDATE chats SET is_active = 1, deactivated_at = NULL WHERE id = ?').run(existing.id);
+    }
+    return getChatById(existing.id);
+  }
+
+  // Allocate and insert atomically: without the transaction two concurrent
+  // /addchannel calls can read the same MAX(id) and race for one id.
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const id = allocateChannelId();
+    db.prepare(
+      `INSERT INTO chats (id, title, type, source, username, added_by)
+       VALUES (?, ?, 'channel', 'channel', ?, ?)`
+    ).run(id, title || handle, handle, addedBy || null);
+    db.exec('COMMIT');
+    return getChatById(id);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    // Lost the race against another caller adding the same channel: the
+    // partial unique index rejected the duplicate, and their row is fine.
+    const raced = getChannelByUsername(handle);
+    if (raced) return raced;
+    throw error;
+  }
+}
+
+function getUserGroups(userId) {
+  return db
+    .prepare(
+      `SELECT c.* FROM chats c
+       JOIN chat_members cm ON cm.chat_id = c.id
+       WHERE cm.user_id = ? AND c.is_active = 1 AND c.source = 'bot'
+       ORDER BY c.title`
+    )
+    .all(userId);
+}
+
+function getUserChannels(userId) {
+  return db
+    .prepare(
+      `SELECT c.* FROM chats c
+       JOIN chat_members cm ON cm.chat_id = c.id
+       WHERE cm.user_id = ? AND c.is_active = 1 AND c.source = 'channel'
+       ORDER BY c.title`
+    )
+    .all(userId);
+}
+
+function unlinkUserFromChat(chatId, userId) {
+  const result = db
+    .prepare('DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?')
+    .run(chatId, userId);
+  return result.changes > 0;
+}
+
 function linkUserToChat(chatId, userId) {
   const result = db
     .prepare(
@@ -226,12 +331,18 @@ function getUserChats(userId) {
 // and shouldn't lose tracking because one member happens to be on the free
 // plan. The group-count limit instead caps which of a user's linked chats
 // they can personally run commands in: their earliest N by join time.
+// Channels are excluded from the group quota and from these two helpers
+// entirely: they are gated by subscription instead, so letting one occupy a
+// free user's single group slot would charge them twice for one feature.
 function isChatWithinFreeLimit(userId, chatId, maxGroups) {
   if (!Number.isFinite(maxGroups)) return true;
   const row = db
     .prepare(
       `SELECT 1 FROM (
-         SELECT chat_id FROM chat_members WHERE user_id = ? ORDER BY joined_at ASC LIMIT ?
+         SELECT cm.chat_id FROM chat_members cm
+         JOIN chats c ON c.id = cm.chat_id
+         WHERE cm.user_id = ? AND c.source = 'bot'
+         ORDER BY cm.joined_at ASC LIMIT ?
        ) WHERE chat_id = ?`
     )
     .get(userId, maxGroups, chatId);
@@ -239,12 +350,15 @@ function isChatWithinFreeLimit(userId, chatId, maxGroups) {
 }
 
 function getAllowedUserChats(userId, maxGroups) {
-  if (!Number.isFinite(maxGroups)) return getUserChats(userId);
+  if (!Number.isFinite(maxGroups)) return getUserGroups(userId);
   return db
     .prepare(
       `SELECT c.* FROM chats c
-       WHERE c.is_active = 1 AND c.id IN (
-         SELECT chat_id FROM chat_members WHERE user_id = ? ORDER BY joined_at ASC LIMIT ?
+       WHERE c.is_active = 1 AND c.source = 'bot' AND c.id IN (
+         SELECT cm.chat_id FROM chat_members cm
+         JOIN chats c2 ON c2.id = cm.chat_id
+         WHERE cm.user_id = ? AND c2.source = 'bot'
+         ORDER BY cm.joined_at ASC LIMIT ?
        )
        ORDER BY c.title`
     )
@@ -595,10 +709,17 @@ module.exports = {
   getUserFilters,
   setUserFilters,
   getOrCreateChat,
+  getChatById,
+  getOrCreateChannel,
+  getChannelByUsername,
   deactivateChat,
   linkUserToChat,
+  unlinkUserFromChat,
   getUserChats,
+  getUserGroups,
+  getUserChannels,
   getAllowedUserChats,
+  CHANNEL_ID_BASE,
   isChatWithinFreeLimit,
   isUserLinkedToChat,
   saveMessage,

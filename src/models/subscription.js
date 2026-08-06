@@ -36,11 +36,16 @@ const SUBSCRIPTION_PLANS = {
   yearly: { label: 'Yearly', stars: 1200, days: 365 },
 };
 
+// maxChannels is the premium gate for public-channel summaries, expressed as a
+// limit rather than a boolean so the free tier and the per-user ceiling are the
+// same knob. The ceiling is not cosmetic: each channel is a live fetch plus an
+// AI summary, so an uncapped follower list is an uncapped bill.
 const FREE_LIMITS = {
   maxSummariesPerDay: 3,
   maxLookbackHours: 24,
   scheduledDigests: false,
   maxGroups: 1,
+  maxChannels: 0,
 };
 
 const PREMIUM_LIMITS = {
@@ -48,6 +53,7 @@ const PREMIUM_LIMITS = {
   maxLookbackHours: 72,
   scheduledDigests: true,
   maxGroups: Infinity,
+  maxChannels: 20,
 };
 
 function getLimits(subscription) {

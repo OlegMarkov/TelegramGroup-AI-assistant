@@ -8,6 +8,7 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 - `/summary [hours]` — AI-generated summary of a group's recent activity. Run inside a group to summarize it directly, or in DM to pick from your linked groups.
 - `/find <query>` — search a group's message history (or across all your linked groups, from DM)
 - `/filter` — pick keywords/topics that get highlighted as a separate "matches your filters" block in summaries
+- `/channels`, `/addchannel @name`, `/removechannel @name` — premium: follow public Telegram channels and summarize them alongside your groups
 - `/digest` — premium: configure an automatic daily digest, delivered by DM at a chosen UTC hour
 - `/subscribe` — buy a premium plan with Telegram Stars (native `XTR` payments, no external provider needed)
 - `/language` — switch interface language (English / Русский)
@@ -22,6 +23,7 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 | `/summary` calls per day | 3 | Unlimited |
 | Lookback window | up to 24h | up to 72h |
 | Groups you can run commands in | 1 | Unlimited |
+| Public channels you can summarize | 0 | 20 |
 | Scheduled daily digest (`/digest`) | ❌ | ✅ |
 
 Limits are defined in [`src/models/subscription.js`](src/models/subscription.js) (`FREE_LIMITS` / `PREMIUM_LIMITS`) and enforced per-requester in [`src/commands/summary.js`](src/commands/summary.js), [`src/commands/find.js`](src/commands/find.js), and [`src/commands/digest.js`](src/commands/digest.js). Daily usage resets at 00:00 UTC. If a user's subscription lapses, their scheduled digest is silently skipped (not deleted) until they resubscribe.
@@ -44,6 +46,17 @@ Run `/stats` (restricted to the Telegram user IDs in `ADMIN_USER_IDS`) to get a 
 2. **Disable privacy mode** for the bot via [@BotFather](https://t.me/BotFather) → `/setprivacy` → *Disable*. Without this, Telegram only forwards the bot messages that mention/reply to it, so it can't see general chat activity to summarize.
 3. Anyone who sends a message in the group gets linked to it, so they can also run `/summary` and `/find` from a private DM with the bot.
 4. Removing the bot from a group (or it being kicked) deactivates tracking for that chat, and its stored messages are purged after a grace period (see below).
+
+## How channel summaries work
+
+A bot cannot see a channel it hasn't been added to, and cannot enumerate what a user subscribes to — Telegram exposes neither through the Bot API. So `/addchannel` reads a channel's own public web preview (`https://t.me/s/<name>`), which is the only unauthenticated, first-party view of a public channel. This is why **only public channels work**: private ones would require holding a user's Telegram session, which is an account-takeover credential this project deliberately does not store.
+
+Posts are fetched at request time and **never written to the database** ([`src/services/channelSource.js`](src/services/channelSource.js) → [`src/services/digest.js`](src/services/digest.js)). Only the generated summary is cached, using the same fingerprint scheme as groups. That keeps third-party content out of every backup, and means `/find` covers groups only — there is no channel history to search.
+
+Two constraints worth knowing if you change this code:
+
+- **Handles are validated before any fetch** (`normalizeHandle`), because the value is interpolated into a URL the server requests. Redirects are not followed, which is both the SSRF control and how a private/nonexistent channel is detected (Telegram answers `302`).
+- **Channel rows get synthetic positive IDs** from `CHANNEL_ID_BASE`, while real Telegram group/channel IDs are always negative. A collision would serve one chat's content to another chat's members, so the two ID spaces are kept disjoint by construction and asserted in `test/channels.test.js`.
 
 ## Localization
 
