@@ -8,7 +8,7 @@ const client = axios.create({
     Authorization: `Bearer ${config.deepseek.apiKey}`,
     'Content-Type': 'application/json',
   },
-  timeout: 30000,
+  timeout: config.deepseek.timeoutMs,
 });
 
 // Russian tokenizes at roughly 1.3 characters per token, so a budget that
@@ -35,8 +35,15 @@ async function chatCompletion(messages, { temperature = 0.5, maxTokens = DEFAULT
       max_tokens: maxTokens,
     }));
   } catch (error) {
-    logger.error('DeepSeek API request failed', {
+    // axios reports a timeout as the bare word "aborted", which reads like a
+    // network blip and sent the last investigation down the wrong path. Name
+    // it, and say what the ceiling was.
+    const timedOut = error.code === 'ECONNABORTED' || /timeout|aborted/i.test(error.message || '');
+    logger.error(timedOut ? 'DeepSeek request timed out' : 'DeepSeek API request failed', {
+      timeoutMs: timedOut ? config.deepseek.timeoutMs : undefined,
+      code: error.code,
       message: error.message,
+      status: error.response && error.response.status,
       response: error.response && error.response.data,
     });
     throw new Error('Failed to get a response from DeepSeek');

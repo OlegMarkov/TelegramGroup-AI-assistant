@@ -16,6 +16,13 @@ module.exports = {
     apiKey: required('DEEPSEEK_API_KEY'),
     baseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
     model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash',
+    // Generation time scales with how much the model writes, and a channel
+    // digest is a long answer. Measured from the production VPS: 19s for a
+    // 16-post channel (1819 tokens out), 25s for 46 posts (2165 tokens). The
+    // old 30s ceiling left about five seconds of headroom and cost the whole
+    // summary whenever a day ran long, so this is sized for the worst case
+    // rather than the average.
+    timeoutMs: Number(process.env.DEEPSEEK_TIMEOUT_MS) || 120000,
   },
 
   redis: {
