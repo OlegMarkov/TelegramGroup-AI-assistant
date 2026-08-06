@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 process.env.BOT_TOKEN = 'test-token';
 process.env.NODE_ENV = 'test';
 
-const { fence } = require('../src/services/deepseek');
+const { fence, readCompletion } = require('../src/services/deepseek');
 const { escapeMarkdown, truncate } = require('../src/utils/formatters');
 
 test('fenced content cannot close its own fence', () => {
@@ -28,6 +28,34 @@ test('fence neutralizes opening tags and is case-insensitive', () => {
 test('fence handles non-string input without throwing', () => {
   assert.doesNotThrow(() => fence(undefined));
   assert.doesNotThrow(() => fence(42));
+});
+
+test('an empty completion is refused rather than shown as a blank summary', () => {
+  // Observed live: the model consumed its entire token budget and returned no
+  // message content. Passing "" through renders an empty summary under a
+  // confident header, which reads as "nothing happened" rather than a failure.
+  const empty = { choices: [{ message: { content: '' }, finish_reason: 'length' }], usage: {} };
+  assert.throws(() => readCompletion(empty, 3000), /empty summary/);
+
+  const whitespace = { choices: [{ message: { content: '   \n ' }, finish_reason: 'stop' }], usage: {} };
+  assert.throws(() => readCompletion(whitespace, 3000), /empty summary/);
+
+  const missing = { choices: [{ message: {}, finish_reason: 'stop' }], usage: {} };
+  assert.throws(() => readCompletion(missing, 3000), /empty summary/);
+});
+
+test('a malformed response is refused rather than crashing on undefined', () => {
+  assert.throws(() => readCompletion({}, 3000), /no choices/);
+  assert.throws(() => readCompletion({ choices: [] }, 3000), /no choices/);
+});
+
+test('a truncated-but-usable completion is still returned', () => {
+  // finish_reason "length" is logged, not fatal: half a summary beats none.
+  const truncated = {
+    choices: [{ message: { content: 'partial text' }, finish_reason: 'length' }],
+    usage: { completion_tokens: 3000 },
+  };
+  assert.equal(readCompletion(truncated, 3000), 'partial text');
 });
 
 test('a link planted in a message cannot render as a link in a highlight', () => {

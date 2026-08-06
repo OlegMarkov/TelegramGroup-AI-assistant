@@ -50,11 +50,27 @@ async function loadWindow(chat, hours) {
   };
 }
 
+// Group messages are short and conversational; channel posts are long-form
+// articles where 300 characters rarely reaches the end of the first paragraph,
+// so the model was summarizing preambles. The extra input costs a fraction of
+// a kopeck per digest.
+const GROUP_MESSAGE_CHARS = 300;
+const CHANNEL_POST_CHARS = 600;
+
+// Highlights are excerpts, so they end in an ellipsis by design — but 150
+// characters cut most channel posts before the point they were making.
+const HIGHLIGHT_CHARS = 280;
+const MAX_HIGHLIGHTS = 10;
+
 function buildTranscript(items, isChannel) {
   // A channel is one voice, so prefixing every line with the same name is
   // noise that costs tokens and tells the model nothing.
   return items
-    .map((item) => (isChannel ? truncate(item.text, 300) : `${item.author || 'someone'}: ${truncate(item.text, 300)}`))
+    .map((item) =>
+      isChannel
+        ? truncate(item.text, CHANNEL_POST_CHARS)
+        : `${item.author || 'someone'}: ${truncate(item.text, GROUP_MESSAGE_CHARS)}`
+    )
     .join(isChannel ? '\n\n' : '\n');
 }
 
@@ -87,8 +103,8 @@ async function generateDigest(chatId, userId, hours, lang = DEFAULT_LANGUAGE) {
       // they are the one place attacker-written text reaches Telegram's parser
       // unmediated. Unescaped, a post containing "[click](http://evil)" renders
       // as a link the user has every reason to read as coming from this bot.
-      const lines = matches.slice(0, 10).map((item) => {
-        const body = escapeMarkdown(truncate(item.text, 150));
+      const lines = matches.slice(0, MAX_HIGHLIGHTS).map((item) => {
+        const body = escapeMarkdown(truncate(item.text, HIGHLIGHT_CHARS));
         return item.author ? `• *${escapeMarkdown(item.author)}*: ${body}` : `• ${body}`;
       });
       highlightBlock = `\n\n${t(lang, 'summary.highlightsHeader')}\n${lines.join('\n')}`;

@@ -11,7 +11,7 @@ const {
 const { generateDigest } = require('../services/digest');
 const { ChannelUnavailableError } = require('../services/channelSource');
 const { getLimits, PREMIUM_LIMITS } = require('../models/subscription');
-const { isGroupChat } = require('../utils/formatters');
+const { isGroupChat, splitForTelegram } = require('../utils/formatters');
 const { t, allTranslations } = require('../utils/i18n');
 const { track, EVENTS } = require('../services/analytics');
 const logger = require('../utils/logger');
@@ -86,15 +86,19 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
 
   const body = `${t(lang, 'summary.header', { hours })}\n\n${result.summaryText}${result.highlightBlock}`;
 
-  try {
-    return await ctx.reply(body, { parse_mode: 'Markdown' });
-  } catch (error) {
-    // The summary is model output shaped by content we do not control, so an
-    // unbalanced * or _ is always possible and makes Telegram reject the whole
-    // message. Delivering it unformatted beats delivering nothing.
-    logger.warn('Summary rejected with Markdown, resending as plain text', { error: error.message });
-    return ctx.reply(body);
+  let sent;
+  for (const part of splitForTelegram(body)) {
+    try {
+      sent = await ctx.reply(part, { parse_mode: 'Markdown' });
+    } catch (error) {
+      // The summary is model output shaped by content we do not control, so an
+      // unbalanced * or _ is always possible and makes Telegram reject the
+      // whole message. Delivering it unformatted beats delivering nothing.
+      logger.warn('Summary part rejected with Markdown, resending as plain text', { error: error.message });
+      sent = await ctx.reply(part);
+    }
   }
+  return sent;
 }
 
 async function summaryHandler(ctx) {

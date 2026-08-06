@@ -11,6 +11,7 @@ const {
   purgeRemovedChatData,
   getUserLanguage,
 } = require('./database');
+const { splitForTelegram } = require('../utils/formatters');
 const { t, normalizeLanguage } = require('../utils/i18n');
 const { getLimits } = require('../models/subscription');
 const { generateDigest } = require('./digest');
@@ -52,12 +53,24 @@ async function runDueDigests() {
       const lang = normalizeLanguage(getUserLanguage(entry.user_id));
       const result = await generateDigest(entry.chat_id, entry.user_id, DIGEST_LOOKBACK_HOURS, lang);
       if (result) {
-        await telegram.sendMessage(
-          entry.user_id,
+        const body =
           `${t(lang, 'digest.dailyHeader', { chat: entry.chat_title })}\n\n` +
-            `${result.summaryText}${result.highlightBlock}`,
-          { parse_mode: 'Markdown' }
-        );
+          `${result.summaryText}${result.highlightBlock}`;
+
+        // Same two hazards as the on-demand path: a digest can exceed
+        // Telegram's 4096-character limit, and model output can carry
+        // unbalanced Markdown. Either one otherwise loses the whole digest.
+        for (const part of splitForTelegram(body)) {
+          try {
+            await telegram.sendMessage(entry.user_id, part, { parse_mode: 'Markdown' });
+          } catch (sendError) {
+            logger.warn('Digest part rejected with Markdown, resending as plain text', {
+              userId: entry.user_id,
+              error: sendError.message,
+            });
+            await telegram.sendMessage(entry.user_id, part);
+          }
+        }
         track(EVENTS.SCHEDULED_DIGEST_SENT, { userId: entry.user_id, chatId: entry.chat_id });
       }
       markDigestSent(entry.chat_id, entry.user_id);
