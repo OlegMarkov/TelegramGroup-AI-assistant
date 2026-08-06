@@ -12,6 +12,7 @@ const { generateDigest } = require('../services/digest');
 const { ChannelUnavailableError } = require('../services/channelSource');
 const { getLimits, PREMIUM_LIMITS } = require('../models/subscription');
 const { isGroupChat, splitForTelegram } = require('../utils/formatters');
+const { startTyping } = require('../utils/typing');
 const { t, allTranslations } = require('../utils/i18n');
 const { track, EVENTS } = require('../services/analytics');
 const logger = require('../utils/logger');
@@ -65,6 +66,11 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
 
   await ctx.reply(t(lang, 'summary.working', { hours, capNote }));
 
+  // Writing a summary takes ~25 seconds, during which the chat is silent and
+  // looks stuck. The indicator is refreshed for the whole wait, and stopped in
+  // `finally` so a failed digest cannot leave it running.
+  const stopTyping = startTyping(ctx);
+
   let result;
   try {
     result = await generateDigest(chatId, requesterId, hours, lang);
@@ -75,6 +81,8 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
     }
     logger.error('Summary generation failed', { error: error.message });
     return ctx.reply(t(lang, 'summary.failed'));
+  } finally {
+    stopTyping();
   }
 
   if (!result) {

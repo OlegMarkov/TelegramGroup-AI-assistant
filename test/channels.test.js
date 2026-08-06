@@ -18,13 +18,21 @@ channelSource.resolveChannel = async (handle) => {
   resolveCalls.push(handle);
   return { handle: String(handle).toLowerCase(), title: `Title of ${handle}` };
 };
-channelSource.fetchChannelPosts = async () => ({
-  title: 'Stub Channel',
-  posts: [
-    { id: 1, text: 'Первый пост про нейросети', createdAt: new Date().toISOString() },
-    { id: 2, text: 'Second post about funding', createdAt: new Date().toISOString() },
-  ],
-});
+// The failure case is selected by handle rather than by swapping this stub
+// later: digest.js destructures fetchChannelPosts at load, so a reassignment
+// after that point would silently have no effect.
+const FAILING_HANDLE = 'failchan';
+
+channelSource.fetchChannelPosts = async (handle) => {
+  if (handle === FAILING_HANDLE) throw new Error('upstream exploded');
+  return {
+    title: 'Stub Channel',
+    posts: [
+      { id: 1, text: 'Первый пост про нейросети', createdAt: new Date().toISOString() },
+      { id: 2, text: 'Second post about funding', createdAt: new Date().toISOString() },
+    ],
+  };
+};
 
 const deepseek = require('../src/services/deepseek');
 deepseek.summarize = async () => 'stub summary';
@@ -50,15 +58,20 @@ const PREMIUM = { plan: 'monthly', status: 'active' };
 
 function makeCtx({ from, subscription, text }) {
   const replies = [];
+  const chatActions = [];
   return {
     chat: { id: from.id, type: 'private' },
     from,
     state: { subscription: subscription || null, lang: 'en' },
     message: { text, message_id: 1, date: Math.floor(Date.now() / 1000) },
     replies,
+    chatActions,
     reply: async (msg) => {
       replies.push(msg);
       return { message_id: 1 };
+    },
+    sendChatAction: async (action) => {
+      chatActions.push(action);
     },
     answerCbQuery: async (msg) => replies.push(msg || ''),
   };
@@ -250,6 +263,35 @@ test('channel posts are summarized from the live fetch, not from stored messages
 
   const stored = db.db.prepare('SELECT COUNT(*) c FROM messages WHERE chat_id = ?').get(chan.id).c;
   assert.equal(stored, 0, 'channel posts must not be persisted');
+});
+
+test('a summary shows the typing indicator while it is being written', async () => {
+  // Generation takes ~25 seconds against the real API, during which the chat
+  // is otherwise silent and looks stuck.
+  const user = { id: 710, first_name: 'Waiting' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+  const chan = db.getOrCreateChannel({ username: 'typingchan', title: 'Typing Chan' });
+  db.linkUserToChat(chan.id, user.id);
+
+  const ctx = await fireCallback(`summary:chat:${chan.id}:24`, { from: user, subscription: PREMIUM });
+  assert.ok(ctx.chatActions.includes('typing'), 'the indicator was never shown');
+});
+
+test('a failed summary still clears the typing indicator', async () => {
+  // The indicator is stopped in a `finally`. Without it a failed digest leaves
+  // the timer refreshing "typing…" forever against a chat with no answer coming.
+  const user = { id: 711, first_name: 'Failing' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+  const chan = db.getOrCreateChannel({ username: FAILING_HANDLE, title: 'Fail Chan' });
+  db.linkUserToChat(chan.id, user.id);
+
+  const ctx = await fireCallback(`summary:chat:${chan.id}:24`, { from: user, subscription: PREMIUM });
+
+  assert.ok(ctx.chatActions.includes('typing'), 'the indicator should have been shown');
+  assert.ok(
+    ctx.replies.some((r) => typeof r === 'string' && /couldn't|could not|failed|try again/i.test(r)),
+    'the user is told it failed rather than being left waiting'
+  );
 });
 
 test('filter highlights on channel posts are escaped and unattributed', async () => {
