@@ -150,6 +150,7 @@ module.exports = {
 
   subscribe: {
     alreadyActive: 'У вас уже есть активная подписка *{plan}* до {expires}.',
+    alreadyActiveShort: 'Подписка уже активна до {expires} UTC — платить повторно не нужно.',
     choosePlan: '⭐ Выберите тариф (оплата звёздами Telegram):',
     unknownPlan: 'Неизвестный тариф',
     planButton: '{label} — {stars} ⭐',

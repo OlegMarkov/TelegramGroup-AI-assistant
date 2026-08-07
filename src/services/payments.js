@@ -1,10 +1,22 @@
 const { SUBSCRIPTION_PLANS } = require('../models/subscription');
-const { createSubscription } = require('./database');
+const { createSubscription, getActiveSubscription } = require('./database');
 const { formatDate } = require('../utils/formatters');
 const { planLabel } = require('../keyboards');
 const { t, DEFAULT_LANGUAGE } = require('../utils/i18n');
 const { track, EVENTS } = require('./analytics');
 const logger = require('../utils/logger');
+
+/**
+ * Timestamps are stored as "YYYY-MM-DD HH:MM:SS" in UTC, by both formatDate
+ * and SQLite's datetime(). Date.parse() reads that shape as *local* time, so
+ * it has to be spelled as UTC explicitly or every comparison is off by the
+ * server's offset — silently correct on a UTC box, wrong anywhere else.
+ */
+function parseStoredUtc(value) {
+  if (!value) return null;
+  const ms = Date.parse(`${String(value).trim().replace(' ', 'T')}Z`);
+  return Number.isFinite(ms) ? ms : null;
+}
 
 async function sendStarsInvoice(ctx, planKey) {
   const plan = SUBSCRIPTION_PLANS[planKey];
@@ -31,6 +43,16 @@ async function handlePreCheckoutQuery(ctx) {
     return ctx.answerPreCheckoutQuery(false, 'Invalid subscription plan');
   }
 
+  // The last server-side gate before money moves, and the only one that holds
+  // no matter where the invoice came from or how old it is. Declining here
+  // means the user is never charged, rather than charged and refunded.
+  const existing = getActiveSubscription(ctx.from.id);
+  if (existing) {
+    const lang = (ctx.state && ctx.state.lang) || DEFAULT_LANGUAGE;
+    logger.info('Declined a duplicate purchase for an active subscriber', { userId: ctx.from.id });
+    return ctx.answerPreCheckoutQuery(false, t(lang, 'subscribe.alreadyActiveShort', { expires: existing.expires_at }));
+  }
+
   return ctx.answerPreCheckoutQuery(true);
 }
 
@@ -45,7 +67,24 @@ async function handleSuccessfulPayment(ctx) {
   }
 
   const lang = (ctx.state && ctx.state.lang) || DEFAULT_LANGUAGE;
-  const expiresAt = formatDate(new Date(Date.now() + plan.days * 24 * 60 * 60 * 1000));
+
+  // Pre-checkout declines duplicates, so reaching here with time still on the
+  // clock means a race — an invoice already in flight when a subscription
+  // started. Extend from whichever is later so the new period is added to the
+  // remaining one instead of replacing it: getActiveSubscription picks the
+  // newest row by started_at, not the longest, so computing from "now" would
+  // let a 300-star monthly silently swallow the rest of a 3000-star yearly.
+  const existing = getActiveSubscription(ctx.from.id);
+  const startFrom = Math.max(Date.now(), parseStoredUtc(existing && existing.expires_at) || 0);
+  const expiresAt = formatDate(new Date(startFrom + plan.days * 24 * 60 * 60 * 1000));
+
+  if (existing) {
+    logger.warn('Payment accepted while a subscription was still active; extending it', {
+      userId: ctx.from.id,
+      previousExpiry: existing.expires_at,
+      newExpiry: expiresAt,
+    });
+  }
 
   createSubscription({
     userId: ctx.from.id,

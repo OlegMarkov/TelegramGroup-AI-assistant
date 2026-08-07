@@ -722,13 +722,25 @@ function createSubscription({ userId, plan, starsPaid, telegramChargeId, expires
   return db.prepare('SELECT * FROM subscriptions WHERE id = ?').get(result.lastInsertRowid);
 }
 
+/**
+ * The subscription that decides a user's access, which is the one running
+ * *longest* — not the one started most recently.
+ *
+ * Ordering by started_at was both wrong and unstable. Wrong because a short
+ * plan bought or comped on top of a long one would win and silently shorten
+ * the user's access. Unstable because started_at is stored to the second, so
+ * two rows created in the same second had no defined order and the answer
+ * could change between requests.
+ *
+ * A NULL expiry means "never expires" and therefore outranks every date.
+ */
 function getActiveSubscription(userId) {
   return db
     .prepare(
       `SELECT * FROM subscriptions
        WHERE user_id = ? AND status = 'active'
          AND (expires_at IS NULL OR expires_at > datetime('now'))
-       ORDER BY started_at DESC
+       ORDER BY (expires_at IS NULL) DESC, expires_at DESC, id DESC
        LIMIT 1`
     )
     .get(userId);

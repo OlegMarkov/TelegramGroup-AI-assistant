@@ -150,6 +150,9 @@ module.exports = {
 
   subscribe: {
     alreadyActive: 'You already have an active *{plan}* subscription until {expires}.',
+    // Shown in a Telegram alert and as a pre-checkout decline, both of which
+    // are plain text with a tight length limit.
+    alreadyActiveShort: 'You are already subscribed until {expires} UTC — no need to pay again.',
     choosePlan: '⭐ Choose a subscription plan (paid with Telegram Stars):',
     unknownPlan: 'Unknown plan',
     planButton: '{label} — {stars} ⭐',
