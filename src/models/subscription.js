@@ -42,16 +42,20 @@ const SUBSCRIPTION_PLANS = {
   yearly: { label: 'Yearly', stars: 3000, days: 365 },
 };
 
-// maxChannels is the premium gate for public-channel summaries, expressed as a
-// limit rather than a boolean so the free tier and the per-user ceiling are the
-// same knob. The ceiling is not cosmetic: each channel is a live fetch plus an
-// AI summary, so an uncapped follower list is an uncapped bill.
+// Free users get one channel rather than none, so the feature is something
+// they use and outgrow instead of something they only read about on a paywall.
+// The premium ceiling is not cosmetic either: every channel is a live fetch
+// plus an AI summary, so an uncapped follower list is an uncapped bill.
+//
+// Because free is no longer zero, "maxChannels === 0" is not a premium test.
+// Access is decided per channel by isChannelWithinLimit, the same way groups
+// work, so a lapsed subscriber keeps their first channel instead of all 20.
 const FREE_LIMITS = {
   maxSummariesPerDay: 3,
   maxLookbackHours: 24,
   scheduledDigests: false,
   maxGroups: 1,
-  maxChannels: 0,
+  maxChannels: 1,
 };
 
 const PREMIUM_LIMITS = {

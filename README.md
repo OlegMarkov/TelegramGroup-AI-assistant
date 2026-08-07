@@ -8,7 +8,7 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 - `/summary [hours]` — AI-generated summary of a group's recent activity. Run inside a group to summarize it directly, or in DM to pick from your linked groups.
 - `/find <query>` — search a group's message history (or across all your linked groups, from DM)
 - `/filter` — pick keywords/topics that get highlighted as a separate "matches your filters" block in summaries
-- `/channels`, `/addchannel @name`, `/removechannel @name` — premium: follow public Telegram channels and summarize them alongside your groups
+- `/channels`, `/addchannel @name`, `/removechannel @name` — follow public Telegram channels and summarize them alongside your groups (1 on the free plan, 20 with premium)
 - `/digest` — premium: configure an automatic daily digest, delivered by DM at a chosen UTC hour
 - `/subscribe` — buy a premium plan with Telegram Stars (native `XTR` payments, no external provider needed)
 - `/language` — switch interface language (English / Русский)
@@ -23,10 +23,12 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 | `/summary` calls per day | 3 | Unlimited |
 | Lookback window | up to 24h | up to 72h |
 | Groups you can run commands in | 1 | Unlimited |
-| Public channels you can summarize | 0 | 20 |
+| Public channels you can summarize | 1 | 20 |
 | Scheduled daily digest (`/digest`) | ❌ | ✅ |
 
 Limits are defined in [`src/models/subscription.js`](src/models/subscription.js) (`FREE_LIMITS` / `PREMIUM_LIMITS`) and enforced per-requester in [`src/commands/summary.js`](src/commands/summary.js), [`src/commands/find.js`](src/commands/find.js), and [`src/commands/digest.js`](src/commands/digest.js). Daily usage resets at 00:00 UTC. If a user's subscription lapses, their scheduled digest is silently skipped (not deleted) until they resubscribe.
+
+**Channels use the same rule as groups, on a separate allowance**: the earliest N a user added are the ones they can summarize, so a lapsed subscriber keeps their first channel rather than losing all 20 at once. The rest stay saved and come back on resubscribe. Because free is 1 rather than 0, `maxChannels === 0` is **not** a premium test — access is decided per channel by `isChannelWithinLimit`.
 
 **Group-count limit specifics**: a free user's "first group" is whichever tracked group they were *first active in* (earliest `chat_members.joined_at`), not the first one they happen to run a command in. This only gates which chats a given user can personally query — **message ingestion keeps tracking every group the bot is in for every member, regardless of any individual member's plan**, since the group may belong to other, possibly premium, members who still need it working.
 

@@ -151,15 +151,38 @@ test('a channel does not consume the free plan group quota', () => {
   assert.equal(db.getUserGroups(user.id).length, 1);
 });
 
-test('/addchannel is refused on the free plan and creates nothing', async () => {
+test('the free plan includes one channel, and the second is an upsell', async () => {
+  // Free is one rather than zero so the feature is something people use and
+  // outgrow, instead of something they only meet as a paywall.
   const user = { id: 701, first_name: 'Free' };
   db.getOrCreateUser({ id: user.id, firstName: user.first_name });
 
-  const ctx = await run('addchannel', { from: user, text: '/addchannel @somechannel' });
+  const first = await run('addchannel', { from: user, text: '/addchannel @freechannel' });
+  assert.ok(first.replies.some((r) => /Added/.test(r)), 'the first channel is allowed without paying');
+  assert.equal(db.getUserChannels(user.id).length, 1);
 
-  assert.match(ctx.replies[0], /premium feature/i);
-  assert.equal(db.getChannelByUsername('somechannel'), undefined, 'nothing was created');
-  assert.equal(db.getUserChannels(user.id).length, 0);
+  const second = await run('addchannel', { from: user, text: '/addchannel @secondchannel' });
+  assert.match(second.replies[second.replies.length - 1], /free plan includes/i);
+  assert.equal(db.getUserChannels(user.id).length, 1, 'the second was not added');
+  assert.equal(db.getChannelByUsername('secondchannel'), undefined, 'and no channel row was created');
+});
+
+test('a premium user at the ceiling is told to remove one, not to subscribe', async () => {
+  // Same condition, entirely different message: hitting the free allowance is
+  // an upsell, hitting the premium ceiling is housekeeping.
+  const user = { id: 712, first_name: 'AtCeiling' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+
+  const { PREMIUM_LIMITS } = require('../src/models/subscription');
+  for (let i = 0; i < PREMIUM_LIMITS.maxChannels; i += 1) {
+    const c = db.getOrCreateChannel({ username: `ceiling_${i}`, title: `C ${i}` });
+    db.linkUserToChat(c.id, user.id);
+  }
+
+  const ctx = await run('addchannel', { from: user, subscription: PREMIUM, text: '/addchannel @onemore2' });
+  const last = ctx.replies[ctx.replies.length - 1];
+  assert.match(last, /maximum/i);
+  assert.ok(!/subscribe/i.test(last), 'a paying user must not be asked to subscribe');
 });
 
 test('an invalid handle is rejected before any network request is made', async () => {
@@ -231,24 +254,47 @@ test('the per-user channel cap is enforced', async () => {
   assert.equal(db.getUserChannels(user.id).length, PREMIUM_LIMITS.maxChannels);
 });
 
-test('a lapsed subscriber cannot summarize a channel they still have buttons for', async () => {
+test('a lapsed subscriber keeps their first channel and loses the rest', async () => {
   // callback_data comes from the client. Hiding channels from the picker is
-  // presentation; this is the check that actually holds when a subscription
-  // expires and the user taps a button Telegram still shows them.
+  // presentation; this is the check that holds when a subscription expires and
+  // the user taps a button Telegram still shows them. Losing the oldest
+  // channel instead of the newest would be the more surprising behaviour.
   const user = { id: 707, first_name: 'Lapsed' };
   db.getOrCreateUser({ id: user.id, firstName: user.first_name });
-  const chan = db.getOrCreateChannel({ username: 'lapsedchan', title: 'Lapsed Chan' });
-  db.linkUserToChat(chan.id, user.id);
+  const first = db.getOrCreateChannel({ username: 'lapsedfirst', title: 'First' });
+  const second = db.getOrCreateChannel({ username: 'lapsedsecond', title: 'Second' });
+  db.linkUserToChat(first.id, user.id);
+  db.linkUserToChat(second.id, user.id);
 
-  const blocked = await fireCallback(`summary:chat:${chan.id}:24`, { from: user, subscription: null });
+  const kept = await fireCallback(`summary:chat:${first.id}:24`, { from: user, subscription: null });
   assert.ok(
-    blocked.replies.some((r) => typeof r === 'string' && /premium feature/i.test(r)),
-    'a user without a subscription must be refused'
+    kept.replies.some((r) => typeof r === 'string' && r.includes('stub summary')),
+    'their earliest channel still works on the free plan'
   );
-  assert.ok(!blocked.replies.some((r) => typeof r === 'string' && r.includes('stub summary')));
 
-  const allowed = await fireCallback(`summary:chat:${chan.id}:24`, { from: user, subscription: PREMIUM });
-  assert.ok(allowed.replies.some((r) => typeof r === 'string' && r.includes('stub summary')));
+  const lost = await fireCallback(`summary:chat:${second.id}:24`, { from: user, subscription: null });
+  assert.ok(lost.replies.some((r) => typeof r === 'string' && /free plan/i.test(r)));
+  assert.ok(!lost.replies.some((r) => typeof r === 'string' && r.includes('stub summary')));
+
+  const resubscribed = await fireCallback(`summary:chat:${second.id}:24`, { from: user, subscription: PREMIUM });
+  assert.ok(resubscribed.replies.some((r) => typeof r === 'string' && r.includes('stub summary')));
+});
+
+test('the picker offers only the channels the plan allows', async () => {
+  const user = { id: 713, first_name: 'Picker' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+  for (const name of ['pick_a', 'pick_b', 'pick_c']) {
+    db.linkUserToChat(db.getOrCreateChannel({ username: name, title: name }).id, user.id);
+  }
+
+  assert.equal(db.getAllowedUserChannels(user.id, 1).length, 1, 'free sees one');
+  assert.equal(db.getAllowedUserChannels(user.id, 20).length, 3, 'premium sees all');
+  assert.equal(db.getUserChannels(user.id).length, 3, 'but none are deleted');
+
+  // /channels still lists everything, with a note about what is locked.
+  const ctx = await run('channels', { from: user, text: '/channels' });
+  assert.match(ctx.replies[0], /pick_a/);
+  assert.match(ctx.replies[0], /free plan/i, 'the locked ones are explained');
 });
 
 test('channel posts are summarized from the live fetch, not from stored messages', async () => {

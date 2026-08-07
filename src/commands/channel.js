@@ -1,12 +1,13 @@
 const {
   getOrCreateChannel,
   getUserChannels,
+  getAllowedUserChannels,
   linkUserToChat,
   unlinkUserFromChat,
   getChannelByUsername,
 } = require('../services/database');
 const { resolveChannel, normalizeHandle, ChannelUnavailableError } = require('../services/channelSource');
-const { getLimits } = require('../models/subscription');
+const { getLimits, PREMIUM_LIMITS } = require('../models/subscription');
 const { escapeMarkdown } = require('../utils/formatters');
 const { t, allTranslations } = require('../utils/i18n');
 const { track, EVENTS } = require('../services/analytics');
@@ -22,24 +23,29 @@ function renderList(lang, channels) {
 async function listHandler(ctx) {
   const lang = ctx.state.lang;
   const limits = getLimits(ctx.state.subscription);
+  const channels = getUserChannels(ctx.from.id);
+  const allowed = getAllowedUserChannels(ctx.from.id, limits.maxChannels);
 
-  if (limits.maxChannels === 0) {
-    track(EVENTS.CHANNEL_BLOCKED_PREMIUM, { userId: ctx.from.id });
-    return ctx.reply(t(lang, 'channel.premiumOnly'), { parse_mode: 'Markdown' });
+  let body = renderList(lang, channels);
+
+  // A lapsed subscriber can be following more channels than their plan now
+  // allows. Saying so beats letting them wonder why a channel they can see
+  // is missing from /summary.
+  if (allowed.length < channels.length) {
+    body += `\n\n${t(lang, 'channel.someLocked', {
+      allowed: allowed.length,
+      total: channels.length,
+      premiumMax: PREMIUM_LIMITS.maxChannels,
+    })}`;
   }
 
-  return ctx.reply(renderList(lang, getUserChannels(ctx.from.id)), { parse_mode: 'Markdown' });
+  return ctx.reply(body, { parse_mode: 'Markdown' });
 }
 
 async function addHandler(ctx) {
   const lang = ctx.state.lang;
   const limits = getLimits(ctx.state.subscription);
   const arg = ctx.message.text.split(' ').slice(1).join(' ').trim();
-
-  if (limits.maxChannels === 0) {
-    track(EVENTS.CHANNEL_BLOCKED_PREMIUM, { userId: ctx.from.id });
-    return ctx.reply(t(lang, 'channel.premiumOnly'), { parse_mode: 'Markdown' });
-  }
 
   if (!arg) return ctx.reply(t(lang, 'channel.usage'));
 
@@ -59,8 +65,19 @@ async function addHandler(ctx) {
   // make the server issue requests.
   const followed = getUserChannels(ctx.from.id).length;
   if (followed >= limits.maxChannels) {
-    track(EVENTS.CHANNEL_BLOCKED_LIMIT, { userId: ctx.from.id });
-    return ctx.reply(t(lang, 'channel.limitReached', { max: limits.maxChannels }));
+    // Hitting the free allowance is an upsell; hitting the premium ceiling is
+    // housekeeping. Same condition, entirely different thing to say.
+    const isPremium = Boolean(ctx.state.subscription);
+    track(isPremium ? EVENTS.CHANNEL_BLOCKED_LIMIT : EVENTS.CHANNEL_BLOCKED_PREMIUM, { userId: ctx.from.id });
+    return ctx.reply(
+      isPremium
+        ? t(lang, 'channel.limitReached', { max: limits.maxChannels })
+        : t(lang, 'channel.freeLimitReached', {
+            max: limits.maxChannels,
+            premiumMax: PREMIUM_LIMITS.maxChannels,
+          }),
+      { parse_mode: 'Markdown' }
+    );
   }
 
   await ctx.reply(t(lang, 'channel.checking', { handle }));

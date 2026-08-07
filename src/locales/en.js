@@ -29,7 +29,7 @@ module.exports = {
       '📝 /summary [hours] — AI summary of recent activity (free: {freeSummaries}/day, up to {freeHours}h)\n' +
       "🔎 /find <query> — search that group's message history\n" +
       '🎯 /filter — pick keywords/topics to get highlighted in summaries\n' +
-      '📢 /channels — premium: summarize public channels you follow\n' +
+      '📢 /channels — summarize public channels (free: {freeChannels}, premium: {premiumChannels})\n' +
       '📅 /digest — premium: automatic daily digest sent to your DM\n' +
       '⭐ /subscribe — unlimited summaries, longer lookback, and daily digests\n' +
       '🌐 /language — change language\n' +
@@ -95,11 +95,16 @@ module.exports = {
   },
 
   channel: {
-    premiumOnly:
-      '⭐ *Channel summaries are a premium feature.*\n\n' +
-      'Follow public Telegram channels and get the same AI summaries you get for your groups — ' +
-      'without reading every post.\n\n' +
-      '/subscribe to unlock, then add channels with `/addchannel @name`.',
+    freeLimitReached:
+      '⭐ *The free plan includes {max} channel.*\n\n' +
+      'You are already following it. /subscribe to follow up to {premiumMax} channels, ' +
+      'or remove the current one with `/removechannel @name`.',
+    blockedLimit:
+      '⭐ On the free plan you can summarize your first {max} channel.\n\n' +
+      '/subscribe to use all {premiumMax} of yours again.',
+    someLocked:
+      '⭐ Only the first {allowed} of your {total} channels work on the free plan. ' +
+      'The rest are kept — /subscribe to use all {premiumMax} again.',
     usage: 'Usage: `/addchannel @channelname`',
     removeUsage: 'Usage: `/removechannel @channelname`',
     invalidHandle:

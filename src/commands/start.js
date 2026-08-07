@@ -1,5 +1,5 @@
 const { mainMenu } = require('../keyboards');
-const { FREE_LIMITS } = require('../models/subscription');
+const { FREE_LIMITS, PREMIUM_LIMITS } = require('../models/subscription');
 const { t } = require('../utils/i18n');
 const { track, EVENTS } = require('../services/analytics');
 
@@ -14,6 +14,10 @@ module.exports = (bot) => {
         name,
         freeSummaries: FREE_LIMITS.maxSummariesPerDay,
         freeHours: FREE_LIMITS.maxLookbackHours,
+        // Sourced from the limits rather than written into the copy, so the
+        // greeting cannot quietly start advertising the wrong allowance.
+        freeChannels: FREE_LIMITS.maxChannels,
+        premiumChannels: PREMIUM_LIMITS.maxChannels,
       }),
       mainMenu(lang)
     );

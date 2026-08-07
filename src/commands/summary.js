@@ -2,6 +2,8 @@ const {
   getUserGroups,
   getUserChannels,
   getAllowedUserChats,
+  getAllowedUserChannels,
+  isChannelWithinLimit,
   getChatById,
   isUserLinkedToChat,
   isChatWithinFreeLimit,
@@ -38,9 +40,12 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
   // Enforced here rather than only in the picker: callback_data is supplied by
   // the client, so a user whose subscription lapsed still has working buttons
   // for every channel they ever saw listed.
-  if (isChannel && limits.maxChannels === 0) {
+  if (isChannel && !isChannelWithinLimit(requesterId, chatId, limits.maxChannels)) {
     track(EVENTS.CHANNEL_BLOCKED_PREMIUM, { userId: requesterId, chatId });
-    return ctx.reply(t(lang, 'channel.premiumOnly'), { parse_mode: 'Markdown' });
+    return ctx.reply(
+      t(lang, 'channel.blockedLimit', { max: limits.maxChannels, premiumMax: PREMIUM_LIMITS.maxChannels }),
+      { parse_mode: 'Markdown' }
+    );
   }
 
   // The group quota does not apply to channels — they have their own cap.
@@ -121,12 +126,13 @@ async function summaryHandler(ctx) {
   const limits = getLimits(ctx.state.subscription);
   const allGroups = getUserGroups(ctx.from.id);
   const allowedGroups = getAllowedUserChats(ctx.from.id, limits.maxGroups);
-  // Free users keep any channels they added while subscribed, but none of them
-  // are offered until they resubscribe.
-  const channels = limits.maxChannels > 0 ? getUserChannels(ctx.from.id) : [];
+  // A lapsed subscriber keeps their earliest channels up to the free
+  // allowance; the rest stay saved but unlisted until they resubscribe.
+  const allChannels = getUserChannels(ctx.from.id);
+  const channels = getAllowedUserChannels(ctx.from.id, limits.maxChannels);
   const chats = [...allowedGroups, ...channels];
 
-  if (allGroups.length === 0 && channels.length === 0) {
+  if (allGroups.length === 0 && allChannels.length === 0) {
     return ctx.reply(t(lang, 'common.noLinkedChats'));
   }
 

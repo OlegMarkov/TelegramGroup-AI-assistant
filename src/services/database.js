@@ -331,22 +331,53 @@ function getUserChats(userId) {
 // and shouldn't lose tracking because one member happens to be on the free
 // plan. The group-count limit instead caps which of a user's linked chats
 // they can personally run commands in: their earliest N by join time.
-// Channels are excluded from the group quota and from these two helpers
-// entirely: they are gated by subscription instead, so letting one occupy a
-// free user's single group slot would charge them twice for one feature.
-function isChatWithinFreeLimit(userId, chatId, maxGroups) {
-  if (!Number.isFinite(maxGroups)) return true;
+// Groups and channels have separate allowances, so neither can eat the other's
+// slots. Both work the same way: the earliest N a user joined are the ones they
+// can use, which means a lapsed subscriber keeps their oldest and loses the
+// rest rather than losing everything at once.
+//
+// chat_id breaks ties because joined_at is stored to the second, so two
+// channels added in the same second would otherwise have no defined order and
+// a user could see a different one allowed on each request.
+function isWithinSourceLimit(userId, chatId, max, source) {
+  if (!Number.isFinite(max)) return true;
+  if (max <= 0) return false;
   const row = db
     .prepare(
       `SELECT 1 FROM (
          SELECT cm.chat_id FROM chat_members cm
          JOIN chats c ON c.id = cm.chat_id
-         WHERE cm.user_id = ? AND c.source = 'bot'
-         ORDER BY cm.joined_at ASC LIMIT ?
+         WHERE cm.user_id = ? AND c.source = ?
+         ORDER BY cm.joined_at ASC, cm.chat_id ASC LIMIT ?
        ) WHERE chat_id = ?`
     )
-    .get(userId, maxGroups, chatId);
+    .get(userId, source, max, chatId);
   return Boolean(row);
+}
+
+function isChatWithinFreeLimit(userId, chatId, maxGroups) {
+  return isWithinSourceLimit(userId, chatId, maxGroups, 'bot');
+}
+
+function isChannelWithinLimit(userId, chatId, maxChannels) {
+  return isWithinSourceLimit(userId, chatId, maxChannels, 'channel');
+}
+
+function getAllowedUserChannels(userId, maxChannels) {
+  if (!Number.isFinite(maxChannels)) return getUserChannels(userId);
+  if (maxChannels <= 0) return [];
+  return db
+    .prepare(
+      `SELECT c.* FROM chats c
+       WHERE c.is_active = 1 AND c.source = 'channel' AND c.id IN (
+         SELECT cm.chat_id FROM chat_members cm
+         JOIN chats c2 ON c2.id = cm.chat_id
+         WHERE cm.user_id = ? AND c2.source = 'channel'
+         ORDER BY cm.joined_at ASC, cm.chat_id ASC LIMIT ?
+       )
+       ORDER BY c.title`
+    )
+    .all(userId, maxChannels);
 }
 
 function getAllowedUserChats(userId, maxGroups) {
@@ -358,7 +389,7 @@ function getAllowedUserChats(userId, maxGroups) {
          SELECT cm.chat_id FROM chat_members cm
          JOIN chats c2 ON c2.id = cm.chat_id
          WHERE cm.user_id = ? AND c2.source = 'bot'
-         ORDER BY cm.joined_at ASC LIMIT ?
+         ORDER BY cm.joined_at ASC, cm.chat_id ASC LIMIT ?
        )
        ORDER BY c.title`
     )
@@ -719,6 +750,8 @@ module.exports = {
   getUserGroups,
   getUserChannels,
   getAllowedUserChats,
+  getAllowedUserChannels,
+  isChannelWithinLimit,
   CHANNEL_ID_BASE,
   isChatWithinFreeLimit,
   isUserLinkedToChat,
