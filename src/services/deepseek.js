@@ -25,6 +25,21 @@ const DEFAULT_MAX_TOKENS = 3000;
 // digest: something scannable in ten seconds, which is the entire point.
 const MAX_BULLETS = 12;
 
+// deepseek-v4-* are reasoning models, and max_tokens caps reasoning AND the
+// answer together. Summaries failed in production with reasoning_tokens: 3000
+// out of a 3000 budget — the model thought until it had nothing left to speak
+// with and returned empty content.
+//
+// Summarizing is extraction, not deduction, so the reasoning buys nothing here.
+// Measured on a 44-post channel: reasoning off is 6s against 14-25s, spends no
+// tokens on thinking, and produces the same structure once the prompt asks for
+// it explicitly. Turning it off also makes the empty-content failure
+// structurally impossible rather than merely unlikely.
+//
+// Note "enable_thinking: false" is silently ignored by this API — verified —
+// so it is this exact shape that matters.
+const THINKING_DISABLED = { type: 'disabled' };
+
 async function chatCompletion(messages, { temperature = 0.5, maxTokens = DEFAULT_MAX_TOKENS } = {}) {
   let data;
   try {
@@ -33,6 +48,7 @@ async function chatCompletion(messages, { temperature = 0.5, maxTokens = DEFAULT
       messages,
       temperature,
       max_tokens: maxTokens,
+      thinking: THINKING_DISABLED,
     }));
   } catch (error) {
     // axios reports a timeout as the bare word "aborted", which reads like a
@@ -110,8 +126,12 @@ async function summarize(text, { language = 'the same language as the input' } =
       role: 'system',
       content:
         `You are a concise assistant that summarizes content in ${language}. ` +
-        `Produce at most ${MAX_BULLETS} bullet points, each a single short line covering one key fact. ` +
-        'When there are many topics, group related bullets under a short bold theme label. ' +
+        // Prescriptive rather than conditional: with reasoning off the model
+        // follows the format it is given and does not decide on one itself.
+        // "When there are many topics, group them" produced no grouping at all.
+        'Group the key facts under 3 to 5 short theme headings. ' +
+        'Put each heading on its own line as **Heading**, followed by 1 to 4 bullet lines starting with "- ". ' +
+        `Use at most ${MAX_BULLETS} bullets in total, each a single short line covering one fact. ` +
         'Leave out routine chatter, greetings and anything a reader would not miss. ' +
         'Always finish the final sentence.\n\n' +
         `The user message contains third-party material between ${CONTENT_OPEN} and ${CONTENT_CLOSE}. ` +
