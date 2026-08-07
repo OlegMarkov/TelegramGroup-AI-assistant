@@ -20,6 +20,24 @@ function truncate(text, maxLength = 400) {
   return `${str.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
+/**
+ * Rewrites CommonMark emphasis into what Telegram's legacy Markdown understands.
+ *
+ * Models write **bold** and __bold__, because that is what CommonMark uses.
+ * Telegram's legacy parse_mode uses *bold* and _italic_, and renders **text**
+ * as two empty bold spans wrapped around plain text — no error, no bold, just
+ * silently unformatted output. That is why AI-written theme headers arrived
+ * looking like every other line.
+ *
+ * Applied to model output only. Text quoted from users and channels goes
+ * through escapeMarkdown instead, which makes these characters inert.
+ */
+function normalizeModelMarkdown(text) {
+  return String(text)
+    .replace(/\*\*(?!\s)([\s\S]+?)(?<!\s)\*\*/g, '*$1*')
+    .replace(/__(?!\s)([\s\S]+?)(?<!\s)__/g, '_$1_');
+}
+
 // Telegram rejects any message over 4096 characters outright — it is not
 // trimmed for you, the whole send fails with a 400. Now that summaries have
 // room to be long, a busy channel can cross it.
@@ -63,6 +81,7 @@ function isGroupChat(chat) {
 module.exports = {
   escapeMarkdownV2,
   escapeMarkdown,
+  normalizeModelMarkdown,
   truncate,
   splitForTelegram,
   TELEGRAM_MAX_MESSAGE,

@@ -8,7 +8,7 @@ const {
 const { summarize } = require('./deepseek');
 const { buildFilterMatcher } = require('./filterMatcher');
 const { fetchChannelPosts } = require('./channelSource');
-const { truncate, escapeMarkdown } = require('../utils/formatters');
+const { truncate, escapeMarkdown, normalizeModelMarkdown } = require('../utils/formatters');
 const { t, DEFAULT_LANGUAGE } = require('../utils/i18n');
 const logger = require('../utils/logger');
 
@@ -111,7 +111,13 @@ async function generateDigest(chatId, userId, hours, lang = DEFAULT_LANGUAGE) {
     }
   }
 
-  return { summaryText, highlightBlock, messageCount: items.length };
+  // Normalized on the way out rather than before caching, so summaries already
+  // stored under the old behaviour are fixed without discarding them.
+  return {
+    summaryText: normalizeModelMarkdown(summaryText),
+    highlightBlock,
+    messageCount: items.length,
+  };
 }
 
 module.exports = { generateDigest };

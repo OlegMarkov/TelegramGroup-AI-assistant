@@ -1,7 +1,53 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { splitForTelegram, TELEGRAM_MAX_MESSAGE, truncate, escapeMarkdown } = require('../src/utils/formatters');
+const {
+  splitForTelegram,
+  TELEGRAM_MAX_MESSAGE,
+  truncate,
+  escapeMarkdown,
+  normalizeModelMarkdown,
+} = require('../src/utils/formatters');
+
+test('CommonMark bold from the model becomes Telegram bold', () => {
+  // The reported bug: theme headers arrived unformatted. Models write
+  // **bold** (CommonMark); Telegram's legacy parse_mode wants *bold* and
+  // renders ** as two empty spans around plain text — no error, no bold.
+  assert.equal(normalizeModelMarkdown('**Трансфер Родри**'), '*Трансфер Родри*');
+  assert.equal(normalizeModelMarkdown('__Bold__'), '_Bold_');
+});
+
+test('every header in a real summary is converted', () => {
+  // Taken from the production cache for @barcafamilyyy.
+  const real =
+    '**Контент и статистика**\n- Янчик в соло обыграл защитников.\n\n' +
+    '**Трансфер Родри**\n- «Барселона» решила подписать Родри.\n\n' +
+    '**Проблемы обороны**\n- Разбор ошибок.';
+  const out = normalizeModelMarkdown(real);
+
+  assert.equal((out.match(/\*\*/g) || []).length, 0, 'no double asterisks survive');
+  assert.equal((out.match(/^\*[^*\n]+\*$/gm) || []).length, 3, 'all three headers are single-asterisk bold');
+  assert.match(out, /^\*Контент и статистика\*$/m);
+});
+
+test('asterisks are left balanced so Telegram does not reject the message', () => {
+  const out = normalizeModelMarkdown('**a** text **b** more **c**');
+  assert.equal((out.match(/\*/g) || []).length % 2, 0, 'an odd count would break parsing');
+  assert.equal(out, '*a* text *b* more *c*');
+});
+
+test('text that is already Telegram-flavoured is left alone', () => {
+  assert.equal(normalizeModelMarkdown('*already bold*'), '*already bold*');
+  assert.equal(normalizeModelMarkdown('2 * 3 * 4'), '2 * 3 * 4', 'arithmetic is not emphasis');
+  assert.equal(normalizeModelMarkdown('- plain bullet'), '- plain bullet');
+});
+
+test('an unpaired ** is left untouched rather than half-converted', () => {
+  // Half-converting would leave a stray delimiter, which is the failure this
+  // whole area is trying to avoid. The plain-text resend covers the rest.
+  assert.equal(normalizeModelMarkdown('**dangling'), '**dangling');
+});
+
 
 test('a message within the limit is not split', () => {
   assert.deepEqual(splitForTelegram('short'), ['short']);
