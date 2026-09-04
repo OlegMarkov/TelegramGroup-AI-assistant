@@ -27,15 +27,64 @@ function subscriptionMenu(lang) {
   return Markup.inlineKeyboard(buttons, { columns: 1 });
 }
 
-function filterCategoriesMenu(lang, selectedCategories = []) {
+function chunk(items, size) {
+  const rows = [];
+  for (let i = 0; i < items.length; i += size) rows.push(items.slice(i, i + size));
+  return rows;
+}
+
+function filterCategoriesMenu(lang, selectedCategories = [], keywordCount = 0) {
   const buttons = FILTER_CATEGORIES.map((category) => {
     const isSelected = selectedCategories.includes(category);
     const label = t(lang, `filter.categories.${category}`);
     return Markup.button.callback(`${isSelected ? '✅' : '▫️'} ${label}`, `filter:category:${category}`);
   });
-  return Markup.inlineKeyboard([...buttons, Markup.button.callback(t(lang, 'common.done'), 'filter:done')], {
-    columns: 2,
-  });
+
+  // With nothing of their own set yet, the button has to say what it is for
+  // rather than report a count of zero.
+  const keywordsLabel =
+    keywordCount > 0
+      ? t(lang, 'filter.keywordsButton', { count: keywordCount })
+      : t(lang, 'filter.keywordsButtonEmpty');
+
+  // Rows are built explicitly rather than with `columns: 2`, which would pack
+  // Done in beside the last category and, once a third action exists, leave
+  // the actions wrapping across rows in whatever order they happen to fall.
+  return Markup.inlineKeyboard([
+    ...chunk(buttons, 2),
+    [Markup.button.callback(keywordsLabel, 'filter:keywords')],
+    [Markup.button.callback(t(lang, 'common.done'), 'filter:done')],
+  ]);
+}
+
+/**
+ * The user's own keywords, one tappable row each, with the same select-then-act
+ * shape as the channel list: tap to tick, 🗑 acts on what is ticked.
+ *
+ * Rows are addressed by the id their feature computed for them rather than by
+ * the keyword itself — callback_data is capped at 64 bytes, which a 50-character
+ * Cyrillic keyword blows straight past.
+ */
+function filterKeywordsMenu(lang, { keywords, selectedIds = new Set() }) {
+  const rows = keywords.map(({ id, word }) => [
+    Markup.button.callback(`${selectedIds.has(id) ? '☑️' : '▫️'} ${truncate(word, 40)}`, `filter:kw:${id}`),
+  ]);
+
+  const actions = [Markup.button.callback(t(lang, 'filter.keywordsAddButton'), 'filter:kw:add')];
+  if (selectedIds.size > 0) {
+    actions.push(
+      Markup.button.callback(
+        t(lang, 'filter.keywordsRemoveButton', { count: selectedIds.size }),
+        'filter:kw:remove'
+      )
+    );
+  }
+
+  return Markup.inlineKeyboard([
+    ...rows,
+    actions,
+    [Markup.button.callback(t(lang, 'filter.keywordsBackButton'), 'filter:back')],
+  ]);
 }
 
 /**
@@ -71,6 +120,7 @@ module.exports = {
   mainMenu,
   subscriptionMenu,
   filterCategoriesMenu,
+  filterKeywordsMenu,
   channelsMenu,
   planLabel,
   FILTER_CATEGORIES,

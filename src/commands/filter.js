@@ -1,11 +1,118 @@
+const crypto = require('node:crypto');
 const { getUserFilters, setUserFilters } = require('../services/database');
-const { filterCategoriesMenu } = require('../keyboards');
+const { filterSchema, MAX_KEYWORDS, MAX_KEYWORD_LENGTH } = require('../models/filter');
+const { normalize } = require('../services/filterMatcher');
+const { filterCategoriesMenu, filterKeywordsMenu } = require('../keyboards');
 const { t, allTranslations } = require('../utils/i18n');
+const { armPrompt, clearPrompt, captureReply, createSelectionStore } = require('../utils/uiState');
+const { track, EVENTS } = require('../services/analytics');
+const logger = require('../utils/logger');
+
+const KEYWORD_PROMPT = 'filter:keyword';
+const keywordSelection = createSelectionStore();
+
+// Every screen here is sent as plain text, with no parse_mode. Keywords are
+// whatever the user typed, and they are echoed back on nearly every one of
+// these messages — plain text makes an unbalanced * or [ inert by construction
+// instead of relying on remembering to escape at each call site.
+
+/**
+ * A short, stable id for a keyword.
+ *
+ * The keyword itself cannot go in callback_data (64 bytes, versus up to 200 for
+ * 50 characters of Cyrillic), and its index in the list cannot either: the list
+ * shifts as things are added and removed, so a stale button would tick the
+ * wrong row. Hashing the normalized form means an id resolves to the same
+ * keyword or to nothing at all.
+ */
+function keywordId(word) {
+  return crypto.createHash('sha1').update(normalize(word)).digest('hex').slice(0, 10);
+}
+
+function withIds(keywords) {
+  return keywords.map((word) => ({ id: keywordId(word), word }));
+}
+
+function save(ctx, filters) {
+  // The one place user-supplied filter content is written, so it is the one
+  // place worth running the schema: it is the single declaration of both
+  // ceilings, and everything above trusts that they hold.
+  const parsed = filterSchema.safeParse(filters);
+  if (!parsed.success) {
+    logger.warn('Rejected filter update', { userId: ctx.from.id, error: parsed.error.message });
+    return false;
+  }
+  setUserFilters(ctx.from.id, parsed.data);
+  return true;
+}
+
+/**
+ * Keywords are personal free text, and a /filter message in a group is one
+ * message shared by everyone in it: whoever taps a button edits what the whole
+ * group sees. Categories are a fixed list of five and were always like this,
+ * but "квартальный отчёт" is nobody else's business, so keywords are shown and
+ * edited in a private chat only.
+ */
+function isPrivate(ctx) {
+  return Boolean(ctx.chat) && ctx.chat.type === 'private';
+}
+
+function categoriesView(ctx) {
+  const lang = ctx.state.lang;
+  const { categories, keywords } = getUserFilters(ctx.from.id);
+
+  // Keywords live on their own screen, so the topics screen says what is set
+  // there — otherwise the only way to remember is to go and look.
+  const text =
+    keywords.length > 0 && isPrivate(ctx)
+      ? `${t(lang, 'filter.choose')}\n\n${t(lang, 'filter.keywordsLine', { keywords: keywords.join(', ') })}`
+      : t(lang, 'filter.choose');
+
+  return { text, keyboard: filterCategoriesMenu(lang, categories, isPrivate(ctx) ? keywords.length : 0) };
+}
+
+function keywordsView(ctx) {
+  const lang = ctx.state.lang;
+  const { keywords } = getUserFilters(ctx.from.id);
+  const entries = withIds(keywords);
+
+  // A keyword removed since the keyboard was drawn must not stay ticked, or
+  // the count on the Remove button promises more than it can deliver.
+  const live = new Set(entries.map((e) => e.id));
+  const selectedIds = new Set([...keywordSelection.get(ctx.from.id)].filter((id) => live.has(id)));
+  keywordSelection.set(ctx.from.id, selectedIds);
+
+  const text =
+    entries.length === 0
+      ? t(lang, 'filter.keywordsEmpty')
+      : `${t(lang, 'filter.keywordsHeader')}\n\n${t(lang, 'filter.keywordsHint')}`;
+
+  return { text, keyboard: filterKeywordsMenu(lang, { keywords: entries, selectedIds }) };
+}
+
+/**
+ * Redraws the open screen in place. Telegram rejects an edit whose result is
+ * identical to what is already shown, and a keyboard can outlive its message
+ * entirely — neither is worth failing the interaction over.
+ */
+async function showView(ctx, view) {
+  const { text, keyboard } = view(ctx);
+  try {
+    await ctx.editMessageText(text, keyboard);
+    return true;
+  } catch (error) {
+    logger.debug('Filter screen edit skipped', { error: error.message });
+    return false;
+  }
+}
+
+function sendView(ctx, view) {
+  const { text, keyboard } = view(ctx);
+  return ctx.reply(text, keyboard);
+}
 
 async function filterHandler(ctx) {
-  const lang = ctx.state.lang;
-  const { categories } = getUserFilters(ctx.from.id);
-  return ctx.reply(t(lang, 'filter.choose'), filterCategoriesMenu(lang, categories));
+  return sendView(ctx, categoriesView);
 }
 
 async function toggleCategory(ctx) {
@@ -16,24 +123,214 @@ async function toggleCategory(ctx) {
     ? filters.categories.filter((c) => c !== category)
     : [...filters.categories, category];
 
-  setUserFilters(ctx.from.id, { ...filters, categories });
+  save(ctx, { ...filters, categories });
 
-  await ctx.editMessageReplyMarkup(filterCategoriesMenu(ctx.state.lang, categories).reply_markup);
+  await showView(ctx, categoriesView);
   return ctx.answerCbQuery();
 }
 
 async function doneFiltering(ctx) {
   const lang = ctx.state.lang;
-  const { categories } = getUserFilters(ctx.from.id);
+  const { categories, keywords } = getUserFilters(ctx.from.id);
   await ctx.answerCbQuery(t(lang, 'filter.saved'));
 
-  if (categories.length === 0) {
+  if (categories.length === 0 && keywords.length === 0) {
     return ctx.reply(t(lang, 'filter.cleared'));
   }
 
-  // Stored categories are English keys; show them in the user's language.
-  const labels = categories.map((c) => t(lang, `filter.categories.${c}`)).join(', ');
-  return ctx.reply(t(lang, 'filter.following', { categories: labels }));
+  const lines = [];
+  if (categories.length > 0) {
+    // Stored categories are English keys; show them in the user's language.
+    const labels = categories.map((c) => t(lang, `filter.categories.${c}`)).join(', ');
+    lines.push(t(lang, 'filter.following', { categories: labels }));
+  }
+  if (keywords.length > 0 && isPrivate(ctx)) {
+    lines.push(t(lang, 'filter.keywordsLine', { keywords: keywords.join(', ') }));
+  }
+  return ctx.reply(lines.join('\n'));
+}
+
+/** Every keyword screen and action goes through here first. */
+async function requirePrivate(ctx) {
+  if (isPrivate(ctx)) return true;
+  await ctx.answerCbQuery();
+  await ctx.reply(t(ctx.state.lang, 'filter.keywordsGroupHint'));
+  return false;
+}
+
+async function openKeywords(ctx) {
+  if (!(await requirePrivate(ctx))) return undefined;
+  await ctx.answerCbQuery();
+  return showView(ctx, keywordsView);
+}
+
+async function backToCategories(ctx) {
+  clearPrompt(ctx.from.id, KEYWORD_PROMPT);
+  await ctx.answerCbQuery();
+  return showView(ctx, categoriesView);
+}
+
+async function toggleKeyword(ctx) {
+  if (!(await requirePrivate(ctx))) return undefined;
+  const lang = ctx.state.lang;
+  const id = ctx.match[1];
+  const { keywords } = getUserFilters(ctx.from.id);
+
+  if (!withIds(keywords).some((e) => e.id === id)) {
+    await ctx.answerCbQuery(t(lang, 'filter.keywordsGone'), { show_alert: true });
+    return showView(ctx, keywordsView);
+  }
+
+  const selected = new Set(keywordSelection.get(ctx.from.id));
+  if (selected.has(id)) selected.delete(id);
+  else selected.add(id);
+  keywordSelection.set(ctx.from.id, selected);
+
+  await showView(ctx, keywordsView);
+  return ctx.answerCbQuery();
+}
+
+async function removeKeywords(ctx) {
+  if (!(await requirePrivate(ctx))) return undefined;
+  const lang = ctx.state.lang;
+  const selected = keywordSelection.get(ctx.from.id);
+
+  if (selected.size === 0) {
+    return ctx.answerCbQuery(t(lang, 'filter.keywordsNothingSelected'), { show_alert: true });
+  }
+
+  // Driven by the user's own stored list rather than by the ids in
+  // callback_data, so a stale or forged button can only ever match nothing.
+  const filters = getUserFilters(ctx.from.id);
+  const removed = filters.keywords.filter((word) => selected.has(keywordId(word)));
+  const kept = filters.keywords.filter((word) => !selected.has(keywordId(word)));
+
+  if (removed.length > 0) {
+    save(ctx, { ...filters, keywords: kept });
+    track(EVENTS.FILTER_KEYWORDS_REMOVED, { userId: ctx.from.id, metadata: { count: removed.length } });
+  }
+
+  keywordSelection.clear(ctx.from.id);
+  await ctx.answerCbQuery(t(lang, 'filter.keywordsRemovedShort'));
+  await showView(ctx, keywordsView);
+
+  if (removed.length > 0) {
+    return ctx.reply(t(lang, 'filter.keywordsRemoved', { keywords: removed.join(', ') }));
+  }
+  return undefined;
+}
+
+function promptForKeywords(ctx) {
+  const lang = ctx.state.lang;
+  armPrompt(ctx.from.id, KEYWORD_PROMPT);
+  return ctx.reply(t(lang, 'filter.keywordsAddPrompt', { max: MAX_KEYWORDS }), {
+    reply_markup: {
+      inline_keyboard: [[{ text: t(lang, 'common.cancel'), callback_data: 'filter:kw:addcancel' }]],
+    },
+  });
+}
+
+async function addKeywordsCallback(ctx) {
+  // Also the point where capturing the next message stops making sense: in a
+  // group that message is somebody talking.
+  if (!(await requirePrivate(ctx))) return undefined;
+  const lang = ctx.state.lang;
+  await ctx.answerCbQuery();
+
+  const { keywords } = getUserFilters(ctx.from.id);
+  if (keywords.length >= MAX_KEYWORDS) {
+    return ctx.reply(t(lang, 'filter.keywordsAtLimit', { max: MAX_KEYWORDS }));
+  }
+
+  return promptForKeywords(ctx);
+}
+
+async function addCancelCallback(ctx) {
+  const lang = ctx.state.lang;
+  clearPrompt(ctx.from.id, KEYWORD_PROMPT);
+  await ctx.answerCbQuery();
+  try {
+    await ctx.editMessageText(t(lang, 'filter.keywordsAddCancelled'));
+  } catch (error) {
+    logger.debug('Keyword prompt cancel edit skipped', { error: error.message });
+  }
+  return undefined;
+}
+
+/**
+ * Splits an answer into keywords on newlines, commas and semicolons — but
+ * never on spaces. "world cup" and "машинное обучение" are single phrases the
+ * matcher handles, and splitting them would quietly turn one precise filter
+ * into two noisy ones.
+ */
+function parseKeywords(input) {
+  return input
+    .split(/[\n,;]+/)
+    .map((word) => word.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Sorts an answer into what was taken and what was not, so the reply can say
+ * exactly which words landed rather than silently dropping some of them.
+ */
+function classifyKeywords(existing, candidates) {
+  const seen = new Set(existing.map(normalize));
+  const added = [];
+  const duplicate = [];
+  const tooLong = [];
+  const overflow = [];
+
+  for (const word of candidates) {
+    if (word.length > MAX_KEYWORD_LENGTH) {
+      tooLong.push(word);
+    } else if (seen.has(normalize(word))) {
+      // Case and ё/е are the matcher's idea of the same word, so they have to
+      // be this list's idea of a duplicate too.
+      duplicate.push(word);
+    } else if (existing.length + added.length >= MAX_KEYWORDS) {
+      overflow.push(word);
+    } else {
+      seen.add(normalize(word));
+      added.push(word);
+    }
+  }
+
+  return { added, duplicate, tooLong, overflow };
+}
+
+async function handleKeywordAnswer(ctx, text) {
+  const lang = ctx.state.lang;
+  const filters = getUserFilters(ctx.from.id);
+  const candidates = parseKeywords(text);
+
+  if (candidates.length === 0) {
+    // Nothing usable in there: stay armed so retyping is enough.
+    armPrompt(ctx.from.id, KEYWORD_PROMPT);
+    return ctx.reply(t(lang, 'filter.keywordsNothingUseful'));
+  }
+
+  const { added, duplicate, tooLong, overflow } = classifyKeywords(filters.keywords, candidates);
+
+  if (added.length > 0) {
+    save(ctx, { ...filters, keywords: [...filters.keywords, ...added] });
+    track(EVENTS.FILTER_KEYWORDS_ADDED, { userId: ctx.from.id, metadata: { count: added.length } });
+  }
+
+  const lines = [];
+  if (added.length > 0) lines.push(t(lang, 'filter.keywordsAdded', { keywords: added.join(', ') }));
+  if (duplicate.length > 0) {
+    lines.push(t(lang, 'filter.keywordsDuplicate', { keywords: duplicate.join(', ') }));
+  }
+  if (tooLong.length > 0) {
+    lines.push(t(lang, 'filter.keywordsTooLong', { max: MAX_KEYWORD_LENGTH, keywords: tooLong.join(', ') }));
+  }
+  if (overflow.length > 0) {
+    lines.push(t(lang, 'filter.keywordsFull', { max: MAX_KEYWORDS, keywords: overflow.join(', ') }));
+  }
+
+  await ctx.reply(lines.join('\n'));
+  return sendView(ctx, keywordsView);
 }
 
 module.exports = (bot) => {
@@ -41,4 +338,13 @@ module.exports = (bot) => {
   bot.hears(allTranslations('menu.filters'), filterHandler);
   bot.action(/^filter:category:(.+)$/, toggleCategory);
   bot.action('filter:done', doneFiltering);
+  bot.action('filter:keywords', openKeywords);
+  bot.action('filter:back', backToCategories);
+  // Registered ahead of the row pattern, which only matches a hash and so can
+  // never claim these.
+  bot.action('filter:kw:add', addKeywordsCallback);
+  bot.action('filter:kw:addcancel', addCancelCallback);
+  bot.action('filter:kw:remove', removeKeywords);
+  bot.action(/^filter:kw:([0-9a-f]{10})$/, toggleKeyword);
+  bot.on('text', captureReply(KEYWORD_PROMPT, handleKeywordAnswer));
 };

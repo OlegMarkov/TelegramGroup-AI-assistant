@@ -83,8 +83,42 @@ module.exports = {
   filter: {
     choose: '🎯 Choose the topics you want to follow:',
     saved: 'Filters saved',
-    following: '✅ Following: {categories}',
+    following: '✅ Topics: {categories}',
+    keywordsLine: '✏️ Keywords: {keywords}',
     cleared: '✅ Filters cleared — you will receive everything.',
+    keywordsButton: '✏️ My keywords ({count})',
+    keywordsButtonEmpty: '✏️ Add my own keywords',
+    keywordsBackButton: '⬅️ Topics',
+    keywordsAddButton: '➕ Add keywords',
+    keywordsRemoveButton: '🗑 Remove ({count})',
+    keywordsHeader: '✏️ Your keywords',
+    keywordsHint:
+      'Anything you follow is highlighted in summaries and digests. ' +
+      'Endings count too — "release" also finds "releases".\n\n' +
+      'Tap one to select it, then 🗑 to remove.',
+    keywordsEmpty:
+      "✏️ You haven't added any keywords of your own yet.\n\n" +
+      'Tap ➕ to follow words the topic filters miss — a project, a person, ' +
+      'your product name. They get highlighted in summaries and digests.',
+    keywordsAddPrompt:
+      '✏️ Send the words you want highlighted.\n\n' +
+      'One per line, or separated by commas — for example:\n' +
+      'deploy, release notes, Anna\n\n' +
+      'Phrases are fine. Up to {max} keywords.',
+    keywordsAddCancelled: 'Cancelled — nothing was added.',
+    keywordsNothingUseful:
+      "I couldn't find any words in that. Send them one per line, or separated by commas.",
+    keywordsAdded: '✅ Added: {keywords}',
+    keywordsDuplicate: 'Already following: {keywords}',
+    keywordsTooLong: 'Skipped, over {max} characters: {keywords}',
+    keywordsFull: "You can follow up to {max} keywords, so these didn't fit: {keywords}",
+    keywordsAtLimit: "You're already following {max} keywords. Remove one to make room.",
+    keywordsGroupHint:
+      'Your keywords are yours alone — open /filter in a private chat with me to see or change them.',
+    keywordsRemoved: '✅ Removed: {keywords}',
+    keywordsRemovedShort: 'Removed',
+    keywordsNothingSelected: 'Tap a keyword in the list first, then press Remove.',
+    keywordsGone: "That keyword isn't in your list any more.",
     categories: {
       Tech: 'Tech',
       Business: 'Business',

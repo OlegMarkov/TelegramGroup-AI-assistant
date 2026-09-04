@@ -22,6 +22,8 @@ const EVENTS = {
   CHANNEL_REMOVED: 'channel_removed',
   CHANNEL_BLOCKED_PREMIUM: 'channel_blocked_premium',
   CHANNEL_BLOCKED_LIMIT: 'channel_blocked_limit',
+  FILTER_KEYWORDS_ADDED: 'filter_keywords_added',
+  FILTER_KEYWORDS_REMOVED: 'filter_keywords_removed',
   DIGEST_CONFIGURED: 'digest_configured',
   SCHEDULED_DIGEST_SENT: 'scheduled_digest_sent',
   SUBSCRIBE_VIEWED: 'subscribe_viewed',

@@ -10,52 +10,13 @@ const { resolveChannel, normalizeHandle, ChannelUnavailableError } = require('..
 const { getLimits, PREMIUM_LIMITS } = require('../models/subscription');
 const { channelsMenu } = require('../keyboards');
 const { escapeMarkdown } = require('../utils/formatters');
-const { t, allTranslations, isMenuButtonText } = require('../utils/i18n');
+const { t, allTranslations } = require('../utils/i18n');
+const { armPrompt, clearPrompt, captureReply, createSelectionStore } = require('../utils/uiState');
 const { track, EVENTS } = require('../services/analytics');
 const logger = require('../utils/logger');
 
-// Both of these are deliberately in memory rather than in the database: they
-// are UI state for a list that is open right now, not something worth keeping
-// across a restart. Losing them costs the user one extra tap.
-const PENDING_ADD_TTL_MS = 5 * 60 * 1000;
-const SELECTION_TTL_MS = 30 * 60 * 1000;
-
-const pendingAdds = new Map(); // userId -> expiresAt
-const selections = new Map(); // userId -> { ids: Set<number>, expiresAt }
-
-function sweep(map) {
-  const now = Date.now();
-  for (const [key, entry] of map) {
-    if ((typeof entry === 'number' ? entry : entry.expiresAt) <= now) map.delete(key);
-  }
-}
-
-function getSelection(userId) {
-  const entry = selections.get(userId);
-  if (!entry || entry.expiresAt <= Date.now()) {
-    selections.delete(userId);
-    return new Set();
-  }
-  return entry.ids;
-}
-
-function setSelection(userId, ids) {
-  sweep(selections);
-  if (ids.size === 0) selections.delete(userId);
-  else selections.set(userId, { ids, expiresAt: Date.now() + SELECTION_TTL_MS });
-}
-
-function armPendingAdd(userId) {
-  sweep(pendingAdds);
-  pendingAdds.set(userId, Date.now() + PENDING_ADD_TTL_MS);
-}
-
-/** Consumes the pending flag: a captured message is only ever answered once. */
-function takePendingAdd(userId) {
-  const expiresAt = pendingAdds.get(userId);
-  pendingAdds.delete(userId);
-  return Boolean(expiresAt) && expiresAt > Date.now();
-}
+const ADD_PROMPT = 'channel:add';
+const selection = createSelectionStore();
 
 /**
  * The whole channels screen — body text and keyboard — from current state.
@@ -74,8 +35,8 @@ function buildView(ctx) {
   // A channel removed since the keyboard was drawn must not stay selected, or
   // the count on the Remove button promises more than it can deliver.
   const live = new Set(channels.map((c) => c.id));
-  const selectedIds = new Set([...getSelection(ctx.from.id)].filter((id) => live.has(id)));
-  setSelection(ctx.from.id, selectedIds);
+  const selectedIds = new Set([...selection.get(ctx.from.id)].filter((id) => live.has(id)));
+  selection.set(ctx.from.id, selectedIds);
 
   let text;
   if (channels.length === 0) {
@@ -219,7 +180,7 @@ async function addChannelFromInput(ctx, input) {
 
 function promptForHandle(ctx) {
   const lang = ctx.state.lang;
-  armPendingAdd(ctx.from.id);
+  armPrompt(ctx.from.id, ADD_PROMPT);
   return ctx.reply(t(lang, 'channel.addPrompt'), {
     parse_mode: 'Markdown',
     reply_markup: {
@@ -275,10 +236,10 @@ async function toggleCallback(ctx) {
     return refreshView(ctx);
   }
 
-  const selected = new Set(getSelection(ctx.from.id));
+  const selected = new Set(selection.get(ctx.from.id));
   if (selected.has(chatId)) selected.delete(chatId);
   else selected.add(chatId);
-  setSelection(ctx.from.id, selected);
+  selection.set(ctx.from.id, selected);
 
   await refreshView(ctx);
   return ctx.answerCbQuery();
@@ -286,7 +247,7 @@ async function toggleCallback(ctx) {
 
 async function removeSelectedCallback(ctx) {
   const lang = ctx.state.lang;
-  const selected = getSelection(ctx.from.id);
+  const selected = selection.get(ctx.from.id);
 
   if (selected.size === 0) {
     return ctx.answerCbQuery(t(lang, 'channel.nothingSelected'), { show_alert: true });
@@ -303,7 +264,7 @@ async function removeSelectedCallback(ctx) {
     }
   }
 
-  setSelection(ctx.from.id, new Set());
+  selection.clear(ctx.from.id);
   await ctx.answerCbQuery(t(lang, 'channel.removedShort'));
 
   // Naming what went keeps the confirmation honest for a multi-channel
@@ -334,7 +295,7 @@ async function addCallback(ctx) {
 
 async function addCancelCallback(ctx) {
   const lang = ctx.state.lang;
-  pendingAdds.delete(ctx.from.id);
+  clearPrompt(ctx.from.id, ADD_PROMPT);
   await ctx.answerCbQuery();
   try {
     await ctx.editMessageText(t(lang, 'channel.addCancelled'));
@@ -345,29 +306,16 @@ async function addCancelCallback(ctx) {
 }
 
 /**
- * Catches the reply to "send me the channel name".
- *
- * Passes everything else straight through: this sits ahead of the handlers
- * registered by later command modules, so anything that looks like a command
- * or a menu button has to keep flowing even while an add is pending —
- * otherwise tapping ⭐ Subscribe at the prompt would try to follow a channel
- * called "Subscribe".
+ * Handles the reply to "send me the channel name".
  */
-function pendingAddCapture() {
-  return async (ctx, next) => {
-    const text = ctx.message && ctx.message.text;
-    if (!text || !ctx.chat || ctx.chat.type !== 'private' || !ctx.from) return next();
-    if (text.startsWith('/') || isMenuButtonText(text)) return next();
-    if (!takePendingAdd(ctx.from.id)) return next();
+async function handleAddAnswer(ctx, text) {
+  const added = await addChannelFromInput(ctx, text);
+  if (added) return sendView(ctx);
 
-    const added = await addChannelFromInput(ctx, text.trim());
-    if (added) return sendView(ctx);
-
-    // A typo shouldn't cost them the prompt: stay armed unless they hit a wall
-    // that retyping cannot get them past.
-    if (!normalizeHandle(text.trim())) armPendingAdd(ctx.from.id);
-    return undefined;
-  };
+  // A typo shouldn't cost them the prompt: stay armed unless they hit a wall
+  // that retyping cannot get them past.
+  if (!normalizeHandle(text)) armPrompt(ctx.from.id, ADD_PROMPT);
+  return undefined;
 }
 
 module.exports = (bot) => {
@@ -379,5 +327,5 @@ module.exports = (bot) => {
   bot.action('channel:remove', removeSelectedCallback);
   bot.action('channel:add', addCallback);
   bot.action('channel:addcancel', addCancelCallback);
-  bot.on('text', pendingAddCapture());
+  bot.on('text', captureReply(ADD_PROMPT, handleAddAnswer));
 };

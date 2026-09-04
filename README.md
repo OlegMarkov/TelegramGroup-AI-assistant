@@ -7,7 +7,7 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 - `/start` — welcome message and main menu
 - `/summary [hours]` — AI-generated summary of a group's recent activity. Run inside a group to summarize it directly, or in DM to pick from your linked groups.
 - `/find <query>` — search a group's message history (or across all your linked groups, from DM)
-- `/filter` — pick keywords/topics that get highlighted as a separate "matches your filters" block in summaries
+- `/filter` — pick topics, and add keywords of your own, that get highlighted as a separate "matches your filters" block in summaries. Topics are toggles; keywords are a second screen where ➕ takes a whole list in one message (one per line or comma separated, phrases included) and 🗑 removes whatever you tick. Keywords match as stems, so `release` also finds `releases`
 - `/channels` — follow public Telegram channels and summarize them alongside your groups (1 on the free plan, 20 with premium). The list is a keyboard: tap channels to select them, 🗑 removes the selection, ➕ asks for the next one by @name or link. `/addchannel` and `/removechannel` still take a handle directly.
 - `/digest` — premium: configure an automatic daily digest, delivered by DM at a chosen UTC hour
 - `/subscribe` — buy a premium plan with Telegram Stars (native `XTR` payments, no external provider needed)
@@ -76,7 +76,7 @@ Adding a language:
 Two things to be careful about when touching translations:
 
 - **Reply-keyboard buttons** are matched by their text, so handlers register `allTranslations('menu.x')` rather than a single string. A user who switches language still has the old keyboard rendered client-side until it's replaced, so every variant must keep working.
-- **Filter category keys** (`Tech`, `Business`, …) stay English in the database and are only translated for display — switching language must not silently drop a user's saved filters. Note this also means category matching still searches for the English word in message text; localized keyword matching is a separate, unsolved product question.
+- **Filter category keys** (`Tech`, `Business`, …) stay English in the database and are only translated for display — switching language must not silently drop a user's saved filters. What each category *matches* is a bilingual vocabulary in [`src/services/filterMatcher.js`](src/services/filterMatcher.js), not the category's own name: it is the message language that decides a match, not the interface language, since someone reading the bot in Russian may well sit in an English-speaking group. User keywords are stored verbatim as typed and matched as stems.
 
 ## Privacy & data retention
 
