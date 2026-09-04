@@ -15,3 +15,8 @@ npm-debug.log*
 # Database snapshots written by deploy/backup.sh on the server. Ignored so a
 # `git clean` can't delete them and they don't clutter `git status`.
 backups/
+
+# Working notes: one file per idea from the 2026-09-05 review, each a
+# ready-to-paste prompt. Deliberately not committed — this is a backlog, not
+# part of the product, and it should be free to go stale without a diff.
+Tasks/
