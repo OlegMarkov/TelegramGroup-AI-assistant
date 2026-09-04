@@ -1,0 +1,198 @@
+================================================================================
+PROJECT CONTEXT PROMPT — Telegram AI Assistant Bot
+Written 2026-09-05. Paste this at the start of a new AI session to give it the
+full picture without re-reading the whole repo.
+================================================================================
+
+## WHAT THIS IS
+
+A production Telegram bot (Node.js, CommonJS) that summarizes group chats and
+public Telegram channels with DeepSeek, lets users search their message history,
+highlights topics/keywords they care about, and sells premium subscriptions paid
+in Telegram Stars (currency XTR — no external payment provider).
+
+Repo: C:\Projects\Telegram AI assistant   (git, branch `main`)
+Deployed: Linux VPS via docker compose (bot + Redis). See DEPLOY.md.
+Languages: English + Russian, full parity enforced by tests.
+Status as of this writing: feature-complete v1, 180 tests passing, live.
+
+
+## WHAT WAS BUILT (chronological, from git history)
+
+1.  Initial bot: group-chat AI assistant — /start, /summary, /find, /filter,
+    /subscribe, /digest, SQLite storage, BullMQ + Redis job queue.
+2.  VPS deploy tooling (deploy/bootstrap.sh, deploy.sh, backup.sh); stopped
+    publishing Redis on all interfaces; documented that ufw does NOT protect
+    Docker-published ports.
+3.  Backups: nightly VACUUM INTO snapshot + git bundle, pulled off-site to the
+    Windows workstation on a schedule (deploy/pull-backups.ps1).
+4.  Healthcheck: heartbeat file touched every 30s, gated on Telegram polling
+    actually being alive — container goes unhealthy if polling silently stops.
+5.  Localization: en/ru, seeded from the client's language_code, /language to
+    switch, summaries generated in the USER's language (not the chat's).
+6.  Privacy: /privacy, /forgetme, retention sweeps, PRIVACY.md.
+7.  Analytics: events table, funnel + retention + weekly cohorts + DAU,
+    admin-only /stats (unadvertised, silent for non-admins).
+8.  Filters: category matching by bilingual topic VOCABULARY (not by the
+    English category key, which never matched Russian text), then user-supplied
+    keywords with stem matching, then keyword gating (1 free / 20 premium).
+9.  Channels: follow public channels, read via https://t.me/s/<handle> web
+    preview, summarize them; button-driven management; 1 free / 20 premium.
+10. Payments hardening: pre_checkout declines duplicate purchases; a payment
+    that lands anyway EXTENDS rather than replaces the active period.
+11. Pricing raised to 300 stars/month, 3000/year (before any paying customers).
+12. DeepSeek tuning: reasoning turned OFF (`thinking: {type:'disabled'}`),
+    max_tokens 3000, timeout 120s, explicit output format (3-5 **headers**,
+    <=12 bullets), CommonMark ** -> Telegram legacy * normalization.
+13. /help — the full guide, every number interpolated from the limit constants.
+
+
+## ARCHITECTURE
+
+src/bot.js            Telegraf init, middleware chain, command registration,
+                      graceful shutdown, publishes the "/" command menu.
+src/config.js         All env vars in one place.
+src/commands/         start help summary find filter channel subscribe digest
+                      stats privacy language  — each exports (bot) => {...}
+src/services/
+  database.js         node:sqlite (DatabaseSync), WAL, schema + migrations,
+                      ALL SQL lives here. ~800 lines. Single source of truth.
+  deepseek.js         Chat completion + the summarize() prompt.
+  digest.js           Loads the window (DB for groups / live fetch for
+                      channels), caches the LLM call, builds highlights.
+  channelSource.js    t.me/s/<handle> scraper: handle validation, HTML parse,
+                      dedupe, pagination.
+  filterMatcher.js    Bilingual category vocabularies + regex matcher.
+  scheduler.js        Hourly BullMQ tick -> due digests + retention sweep.
+  payments.js         Stars invoice, pre_checkout, successful_payment.
+  analytics.js        track() (fire-and-forget) + report builders.
+  queue.js            ioredis connection + BullMQ worker.
+src/models/           Zod schemas + the limit constants (subscription.js,
+                      filter.js). FREE_LIMITS / PREMIUM_LIMITS live here.
+src/locales/en.js|ru.js   ALL user-facing copy. No strings in handlers.
+src/utils/            i18n, formatters, uiState (prompts + selections),
+                      logger, heartbeat, typing indicator.
+test/                 17 files, node:test, throwaway SQLite per file, all
+                      network stubbed. `npm test` needs no secrets/Redis/net.
+
+
+## LOAD-BEARING DESIGN DECISIONS (do not "simplify" these away)
+
+* Free limits are ALLOWANCES, NOT booleans. Free = 1 group, 1 channel,
+  1 keyword. So `maxChannels === 0` is NOT a premium test — access is decided
+  per item by isChannelWithinLimit / allowedKeywords, "earliest N wins", so a
+  lapsed subscriber keeps their oldest item instead of losing all 20.
+* Keyword gating is enforced in digest.js (on the way OUT), not on the /filter
+  screen (on the way IN) — a subscription can lapse in between.
+* Ingestion tracks EVERY member of EVERY group regardless of plan; the limit
+  only caps which chats a given user may personally query.
+* Channel posts are fetched at request time and NEVER written to the DB. Only
+  the generated summary is cached. That is why /find covers groups only.
+* Channel IDs are synthetic positive ints from CHANNEL_ID_BASE = 1e12; real
+  Telegram group/channel ids are always negative. Disjoint by construction — a
+  collision would serve one chat's content to another chat's members.
+* Channel handles are validated by an anchored regex BEFORE any fetch, and
+  redirects are not followed (maxRedirects: 0). That is both the SSRF control
+  and how a private/nonexistent channel is detected (Telegram answers 302).
+* digest_cache is keyed by (chat_id, hours, LANGUAGE) and fingerprinted by
+  "maxMessageId:count" — no TTL; it invalidates the instant the window changes.
+* getActiveSubscription orders by LONGEST remaining, not most recent, so a
+  cheap plan can never shorten an expensive one.
+* Model output goes through normalizeModelMarkdown(); quoted user/channel text
+  goes through escapeMarkdown(). Never mix the two up.
+* Every Markdown send of model output has a plain-text retry — unbalanced * or
+  _ from an untrusted source otherwise makes Telegram reject the whole message.
+* Third-party text is fenced in <content>...</content> in the DeepSeek prompt
+  and the fence tokens are stripped from the payload — prompt-injection control.
+* Reply-keyboard taps arrive as plain text; isMenuButtonText() keeps them out
+  of ingested conversation and out of captureReply prompts, IN EVERY LANGUAGE
+  (a user who switched language still has the old keyboard client-side).
+* .gitattributes forces LF — CRLF breaks multi-line `run: |` on CI's Linux box.
+* /stats is deliberately absent from the published command menu and replies
+  with NOTHING to non-admins, so its existence isn't discoverable.
+
+
+## CONVENTIONS TO FOLLOW
+
+* Commit messages: lowercase "area: what changed, in plain words" — they
+  describe the user-visible change, not the diff. e.g.
+  "filters: one keyword free, twenty with premium".
+* Comments explain WHY, especially the non-obvious constraint that forced the
+  code to be this shape. Do not add restating-the-code comments.
+* All user-facing text goes in BOTH locales or the i18n test fails.
+* All limits come from FREE_LIMITS / PREMIUM_LIMITS via {placeholders} —
+  never typed into a sentence.
+* New SQL goes in database.js only.
+* Tests: node:test, own temp DB, stub all network.
+* Run `npm test` before committing. Node >= 22.5; run with --experimental-sqlite
+  on Node < 24.
+
+
+## FIXED 2026-09-05 (regression tests exist — do not reintroduce)
+
+* getRecentMessages() took the OLDEST N in the window, so a busy group's
+  summary silently omitted the most recent activity AND froze the digest cache
+  (the fingerprint keys on the highest message id, which never changed). Now a
+  DESC-limited subquery re-sorted ascending.
+* The "earliest N wins" allowance subqueries did not filter is_active, so a
+  dead group kept its slot and a free user whose oldest group lost the bot
+  could summarize nothing at all.
+* /find rendered chat title, author and message body as Markdown unescaped and
+  with no plain-text retry. Now escaped like the digest highlights, retried
+  plain, and split with splitForTelegram (escaping can nearly double length).
+* subscriptions.telegram_charge_id is now a partial UNIQUE index and
+  createSubscription() deduplicates on it; handleSuccessfulPayment() returns
+  the stored receipt on a redelivery instead of granting a second period.
+* getDueScheduledDigests() now reads last_sent_at, so a retried BullMQ tick
+  cannot re-send a digest already delivered that hour.
+* The rate-limit refusal is localized (it runs before auth(), so it reads the
+  stored language only on the rejection path), and its map is swept.
+
+## KNOWN OPEN ISSUES (verified 2026-09-05, not yet fixed)
+
+1. Photo/video CAPTIONS and edited messages are not ingested — caption-only
+   posts are invisible to /summary and /find.
+2. Digest times are UTC-only with 4 fixed hour choices; there is no per-user
+   timezone.
+3. No subscription-expiry reminder, no /status command, no refund handling
+   (Telegram's refundStarPayment is not wired up).
+4. /find uses LIKE '%q%' with no FTS index and no escaping of % / _ .
+5. The scheduler sends digests in a tight loop with no throttle or backoff —
+   Telegram starts 429-ing around 30 messages/second.
+6. A 403 from a user who blocked the bot leaves their digest enabled, retrying
+   daily forever.
+7. Retention enforcement rides the Redis-backed hourly tick, so a long Redis
+   outage means retaining data past what PRIVACY.md promises.
+8. Group members who join after the bot has no way of learning it is there;
+   the join notice is posted once.
+9. getRecentMessages caps at 200 messages with no note to the user when a
+   busier window is truncated.
+
+
+## ENVIRONMENT / OPS QUICK REFERENCE
+
+.env keys: BOT_TOKEN, DEEPSEEK_API_KEY, DEEPSEEK_MODEL (deepseek-v4-flash),
+DEEPSEEK_TIMEOUT_MS, REDIS_*, DATABASE_PATH, ADMIN_USER_IDS,
+MESSAGE_RETENTION_DAYS (90), PURGE_AFTER_REMOVAL_DAYS (7), LOG_LEVEL.
+
+BotFather setup: /setprivacy -> DISABLE (required, or the bot cannot see group
+messages at all).
+
+Redis must be up for scheduled digests AND for retention enforcement (both ride
+the same hourly tick). On-demand /summary and /find work without it.
+
+Backup: docker compose exec bot node -e "...VACUUM INTO..." — a plain file copy
+can miss data in bot.db-wal.
+
+Deploy update: git pull && docker compose up -d --build (migrations run at
+startup, SIGTERM is handled cleanly).
+
+
+## HOW TO ASK FOR WORK ON THIS PROJECT
+
+Good prompt shape:
+  "In C:\Projects\Telegram AI assistant: <change>. Follow the conventions in
+   PROJECT_PROMPT.txt — locale parity, limits from the constants, SQL in
+   database.js, a test for the behaviour, and run npm test."
+
+================================================================================
