@@ -151,6 +151,26 @@ db.exec(`
     ON chats(username) WHERE source = 'channel';
 `);
 
+// One row per Telegram charge. Telegram re-delivers an update it did not see
+// acknowledged, so without this a redelivered successful_payment grants a
+// second subscription period for one payment. Partial, because comped and
+// legacy rows carry no charge id and must not collide with each other.
+//
+// Guarded rather than asserted: a database that already contains a duplicate
+// (which is the very bug this prevents) must not become a bot that refuses to
+// start. Log it and carry on — createSubscription still deduplicates in code.
+try {
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_charge_id
+      ON subscriptions(telegram_charge_id) WHERE telegram_charge_id IS NOT NULL;
+  `);
+} catch (error) {
+  logger.error(
+    'Could not add the unique index on subscriptions.telegram_charge_id — there are already duplicate charge ids',
+    { error: error.message }
+  );
+}
+
 logger.info(`SQLite database ready at ${dbPath}`);
 
 function getOrCreateUser({ id, username, firstName, language }) {
@@ -736,7 +756,34 @@ function getDailyActiveUsers(days = 14) {
     .all(`-${days} days`);
 }
 
+function getSubscriptionByChargeId(telegramChargeId) {
+  if (!telegramChargeId) return undefined;
+  return db.prepare('SELECT * FROM subscriptions WHERE telegram_charge_id = ?').get(telegramChargeId);
+}
+
+/**
+ * Records a purchase, once per Telegram charge.
+ *
+ * Telegram retries an update it did not see acknowledged, so the same
+ * successful_payment can arrive more than once — after a deploy, a timeout, or
+ * a crash between receiving it and replying. Each redelivery used to insert
+ * another row and hand out another 30 days for one payment. The charge id is
+ * the natural idempotency key, and returning the existing row rather than
+ * throwing keeps the caller's confirmation message correct on the retry.
+ *
+ * Comped subscriptions have no charge id and are never deduplicated.
+ */
 function createSubscription({ userId, plan, starsPaid, telegramChargeId, expiresAt }) {
+  const existing = getSubscriptionByChargeId(telegramChargeId);
+  if (existing) {
+    logger.warn('Ignoring a redelivered payment for a charge already recorded', {
+      userId,
+      telegramChargeId,
+      subscriptionId: existing.id,
+    });
+    return existing;
+  }
+
   const result = db
     .prepare(
       `INSERT INTO subscriptions (user_id, plan, stars_paid, telegram_charge_id, expires_at)
@@ -816,5 +863,6 @@ module.exports = {
   getWeeklyCohorts,
   getDailyActiveUsers,
   createSubscription,
+  getSubscriptionByChargeId,
   getActiveSubscription,
 };

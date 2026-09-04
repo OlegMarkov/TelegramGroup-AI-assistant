@@ -207,3 +207,73 @@ test('an expired subscription does not extend a new purchase', async () => {
   const active = db.getActiveSubscription(808);
   assert.equal(active.expires_at.slice(0, 10), daysFromNow(30).slice(0, 10), 'dated from today');
 });
+
+test('a redelivered payment grants one period, not two', async () => {
+  // Telegram resends an update it did not see acknowledged — after a deploy,
+  // a timeout, or a crash between receiving it and replying. Without the
+  // charge id as an idempotency key, the retry read the subscription this very
+  // charge had just created and extended past it: 60 days for one payment.
+  db.getOrCreateUser({ id: 909, firstName: 'Retried' });
+
+  const payment = {
+    invoice_payload: 'subscription:monthly:909',
+    total_amount: 300,
+    telegram_payment_charge_id: 'charge-909',
+  };
+
+  const first = makeCtx({ userId: 909 });
+  first.message = { successful_payment: payment };
+  await handleSuccessfulPayment(first);
+
+  const afterFirst = db.getActiveSubscription(909);
+  assert.equal(afterFirst.expires_at.slice(0, 10), daysFromNow(30).slice(0, 10));
+
+  // The same update again, exactly as Telegram would resend it.
+  const second = makeCtx({ userId: 909, subscription: afterFirst });
+  second.message = { successful_payment: payment };
+  await handleSuccessfulPayment(second);
+
+  const rows = db.db.prepare('SELECT * FROM subscriptions WHERE user_id = ?').all(909);
+  assert.equal(rows.length, 1, 'one charge is one subscription row');
+  assert.equal(
+    db.getActiveSubscription(909).expires_at,
+    afterFirst.expires_at,
+    'the expiry must not move on a redelivery'
+  );
+
+  // Still confirmed, because from the user's side the payment did succeed —
+  // silence would read as money taken for nothing.
+  assert.equal(second.calls.replies.length, 1);
+  assert.match(second.calls.replies[0], /Monthly/);
+});
+
+test('two genuinely different charges still stack, so a second purchase is not swallowed', async () => {
+  db.getOrCreateUser({ id: 910, firstName: 'Renewer' });
+
+  const buy = async (chargeId, subscription) => {
+    const ctx = makeCtx({ userId: 910, subscription: subscription || null });
+    ctx.message = {
+      successful_payment: {
+        invoice_payload: 'subscription:monthly:910',
+        total_amount: 300,
+        telegram_payment_charge_id: chargeId,
+      },
+    };
+    await handleSuccessfulPayment(ctx);
+    return db.getActiveSubscription(910);
+  };
+
+  const first = await buy('charge-910-a');
+  const second = await buy('charge-910-b', first);
+
+  assert.equal(db.db.prepare('SELECT COUNT(*) c FROM subscriptions WHERE user_id = ?').get(910).c, 2);
+  assert.equal(second.expires_at.slice(0, 10), daysFromNow(60).slice(0, 10), 'the second period is added on');
+});
+
+test('a comped subscription carries no charge id and is never deduplicated', () => {
+  db.getOrCreateUser({ id: 911, firstName: 'Comped' });
+  db.createSubscription({ userId: 911, plan: 'monthly', starsPaid: 0, expiresAt: daysFromNow(30) });
+  db.createSubscription({ userId: 911, plan: 'monthly', starsPaid: 0, expiresAt: daysFromNow(60) });
+
+  assert.equal(db.db.prepare('SELECT COUNT(*) c FROM subscriptions WHERE user_id = ?').get(911).c, 2);
+});

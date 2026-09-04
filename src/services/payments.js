@@ -1,5 +1,5 @@
 const { SUBSCRIPTION_PLANS } = require('../models/subscription');
-const { createSubscription, getActiveSubscription } = require('./database');
+const { createSubscription, getActiveSubscription, getSubscriptionByChargeId } = require('./database');
 const { formatDate } = require('../utils/formatters');
 const { planLabel } = require('../keyboards');
 const { t, DEFAULT_LANGUAGE } = require('../utils/i18n');
@@ -67,6 +67,27 @@ async function handleSuccessfulPayment(ctx) {
   }
 
   const lang = (ctx.state && ctx.state.lang) || DEFAULT_LANGUAGE;
+
+  // Telegram redelivers an update it did not see acknowledged — after a
+  // deploy, a timeout, or a crash between receiving this one and answering it.
+  // Handled before anything is computed, because the expiry below extends from
+  // the active subscription, which on a redelivery is the one this very charge
+  // already created: recomputing would hand out a second period for one
+  // payment. Confirm again from the stored row instead, so a user whose
+  // network dropped still sees the receipt.
+  const alreadyRecorded = getSubscriptionByChargeId(payment.telegram_payment_charge_id);
+  if (alreadyRecorded) {
+    logger.info('Ignoring a redelivered successful_payment', {
+      userId: ctx.from.id,
+      chargeId: payment.telegram_payment_charge_id,
+    });
+    return ctx.reply(
+      t(lang, 'subscribe.thanks', {
+        label: planLabel(lang, alreadyRecorded.plan),
+        expires: alreadyRecorded.expires_at,
+      })
+    );
+  }
 
   // Pre-checkout declines duplicates, so reaching here with time still on the
   // clock means a race — an invoice already in flight when a subscription
