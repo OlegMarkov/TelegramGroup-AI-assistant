@@ -276,6 +276,7 @@ module.exports = {
     planButton: '{label} — {stars} ⭐',
     planMonthly: 'Monthly',
     planYearly: 'Yearly',
+    planComp: 'Complimentary',
     invoiceTitle: '{label} subscription',
     invoiceDescription: 'Unlock premium features for {days} days.',
     thanks: '✅ Thanks! Your {label} subscription is now active until {expires} UTC.',

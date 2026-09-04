@@ -934,6 +934,26 @@ function hasRecentReminder(userId, withinDays) {
   );
 }
 
+/**
+ * Takes a subscription out of circulation without deleting the billing record.
+ *
+ * getActiveSubscription filters on status = 'active', so anything else here -
+ * 'refunded', 'revoked' - stops granting access the moment it is written, while
+ * the row survives as the history of what was charged and what was given back.
+ */
+function setSubscriptionStatus(subscriptionId, status) {
+  const result = db.prepare('UPDATE subscriptions SET status = ? WHERE id = ?').run(status, subscriptionId);
+  return Number(result.changes);
+}
+
+/** Every live subscription a user has, revoked at once. Returns how many. */
+function revokeActiveSubscriptions(userId) {
+  const result = db
+    .prepare("UPDATE subscriptions SET status = 'revoked' WHERE user_id = ? AND status = 'active'")
+    .run(userId);
+  return Number(result.changes);
+}
+
 function getSubscriptionByChargeId(telegramChargeId) {
   if (!telegramChargeId) return undefined;
   return db.prepare('SELECT * FROM subscriptions WHERE telegram_charge_id = ?').get(telegramChargeId);
@@ -1042,6 +1062,8 @@ module.exports = {
   getWeeklyCohorts,
   getDailyActiveUsers,
   createSubscription,
+  setSubscriptionStatus,
+  revokeActiveSubscriptions,
   getSubscriptionsDueForReminder,
   markReminderSent,
   hasRecentReminder,

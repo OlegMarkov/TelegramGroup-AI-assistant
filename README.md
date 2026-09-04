@@ -12,12 +12,16 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 - `/channels` — follow public Telegram channels and summarize them alongside your groups (1 on the free plan, 20 with premium). The list is a keyboard: tap channels to select them, 🗑 removes the selection, ➕ asks for the next one by @name or link. `/addchannel` and `/removechannel` still take a handle directly.
 - `/digest` — premium: configure an automatic daily digest, delivered by DM at a chosen UTC hour
 - `/subscribe` — buy a premium plan with Telegram Stars (native `XTR` payments, no external provider needed)
+- `/status` — your plan and expiry, summaries used today, and how many groups, channels and keywords are active against your allowance, with anything past it marked locked
 - `/language` — switch interface language (English / Русский)
 - `/privacy` — what the bot stores, who sees it, and how long it's kept
 - `/forgetme` — permanently delete your own stored messages and settings
-- `/stats [days]` — admin-only: usage and free→paid conversion report (default 30 days)
+- `/stats [days]` — admin-only: usage, free→paid and reminder→renewal conversion (default 30 days)
+- `/refund <charge_id>` — admin-only: refund a Stars payment and mark that subscription refunded
+- `/grant <user_id> <days>` — admin-only: comp someone a subscription
+- `/revoke <user_id>` — admin-only: take back every active subscription a user has
 
-Everything except `/stats` is published to Telegram's "/" menu at startup by `publishCommandMenu()` in [`src/bot.js`](src/bot.js), in each supported language, with descriptions from the `commands.*` translations. `/stats` is left out on purpose: not advertising it is what keeps non-admins from discovering it exists.
+Everything except the admin commands is published to Telegram's "/" menu at startup by `publishCommandMenu()` in [`src/bot.js`](src/bot.js), in each supported language, with descriptions from the `commands.*` translations. `/stats`, `/refund`, `/grant` and `/revoke` are left out on purpose, and reply with nothing at all to a non-admin: not advertising them is what keeps their existence undiscoverable.
 
 The user-facing copy lives entirely in [`src/locales/en.js`](src/locales/en.js) and [`src/locales/ru.js`](src/locales/ru.js). Every limit it quotes is interpolated from `FREE_LIMITS` / `PREMIUM_LIMITS` rather than typed into the sentence, so the instructions cannot drift from what the code actually allows. Tests in [`test/i18n.test.js`](test/i18n.test.js) hold the two locales to the same keys and placeholders, check that every command named in the greeting or the guide is one the bot really answers, and check that the guide still fits in a single Telegram message with balanced Markdown.
 
@@ -275,3 +279,7 @@ src/
 ## Telegram Stars payments
 
 Subscriptions use Telegram's native Stars payments (currency `XTR`), so no external payment provider or `provider_token` is required. Plans are defined in [`src/models/subscription.js`](src/models/subscription.js).
+
+**Expiry reminders.** Three DMs ride the hourly tick — three days out, one day out, and on the day it lapses — each with a Renew button. Delivery is recorded per (subscription, stage) in `subscription_reminders`, so a retried tick cannot re-notify, and each new period runs its own set. Someone who has already renewed is skipped, as is a comped row with no expiry. `/stats` reports the reminder→renewal rate.
+
+**Refunds and comps.** `/refund` calls Telegram's `refundStarPayment` and only marks the row `refunded` if Telegram accepted — marking first would take away access on a call that might fail. `/grant` writes a comped row with a **NULL** `telegram_charge_id`; a placeholder id there collides with the next comp on the partial unique index, which is exactly how the live database ended up unable to create that index. `getActiveSubscription` filters on `status = 'active'`, so `refunded` and `revoked` rows stop granting access the moment they are written while surviving as billing history.

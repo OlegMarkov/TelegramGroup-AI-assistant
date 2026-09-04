@@ -273,6 +273,7 @@ module.exports = {
     planButton: '{label} — {stars} ⭐',
     planMonthly: 'Месячная',
     planYearly: 'Годовая',
+    planComp: 'Подарочная',
     invoiceTitle: 'Подписка «{label}»',
     invoiceDescription: 'Премиум-возможности на {days} дн.',
     thanks: '✅ Спасибо! Подписка «{label}» активна до {expires} UTC.',

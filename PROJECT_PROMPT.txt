@@ -52,8 +52,9 @@ Status as of this writing: feature-complete v1, 180 tests passing, live.
 src/bot.js            Telegraf init, middleware chain, command registration,
                       graceful shutdown, publishes the "/" command menu.
 src/config.js         All env vars in one place.
-src/commands/         start help summary find filter channel subscribe digest
-                      stats privacy language  — each exports (bot) => {...}
+src/commands/         start help summary find filter channel subscribe status
+                      digest stats admin privacy language
+                      — each exports (bot) => {...}
 src/services/
   database.js         node:sqlite (DatabaseSync), WAL, schema + migrations,
                       ALL SQL lives here. ~800 lines. Single source of truth.
@@ -63,9 +64,13 @@ src/services/
   channelSource.js    t.me/s/<handle> scraper: handle validation, HTML parse,
                       dedupe, pagination.
   filterMatcher.js    Bilingual category vocabularies + regex matcher.
-  scheduler.js        Hourly BullMQ tick -> due digests. Retention sweeps run
-                      on a plain unref'd setInterval, independent of Redis.
+  scheduler.js        Hourly BullMQ tick -> due digests + expiry reminders.
+                      Retention sweeps run on a plain unref'd setInterval,
+                      independent of Redis.
   payments.js         Stars invoice, pre_checkout, successful_payment.
+  ../utils/telegramSend.js  Paced, retrying sender: 20/sec, waits out a 429 for
+                      its retry_after, bounded retries, blocked/bad-request
+                      classification. Shared by the scheduler and reminders.
   analytics.js        track() (fire-and-forget) + report builders.
   queue.js            ioredis connection + BullMQ worker.
 src/models/           Zod schemas + the limit constants (subscription.js,
@@ -157,6 +162,28 @@ test/                 17 files, node:test, throwaway SQLite per file, all
   message, 600 per channel post, no identifiers) and what never is (/find never
   leaves the server), and describe the summary cache's lifetime. The 300 comes
   from digest.js's exported GROUP_MESSAGE_CHARS, not from the copy.
+* Digest sends are paced (20/sec) through utils/telegramSend.js, wait out a
+  429 for its stated retry_after, and retry a transient failure a bounded
+  number of times. A 403 disables that user's scheduled digest with
+  disabled_reason='blocked' rather than retrying daily for ever; a 429 or a
+  network error must never take that path. markDigestSent now runs only after
+  a send genuinely succeeded. The Markdown->plain fallback is narrowed to a
+  400, the only code that means "I could not parse that".
+* /status reports plan, expiry, summaries used today and every allowance with
+  its locked overflow. renderLimit() turns PREMIUM_LIMITS' real Infinity into
+  a word. Its Subscribe button and the reminder's Renew button are one
+  registration (renew:open) in subscribe.js, reusing the real handler.
+* Expiry reminders at 3 days, 1 day and on lapse ride the same hourly tick.
+  Recorded per (subscription, stage) in subscription_reminders, so a retry
+  cannot re-notify and each new period gets its own set. Stage windows are
+  half-open and the lapse stage is bounded at BOTH ends, or a first deploy
+  would DM everyone who ever lapsed. A 403 marks the stage done; a transient
+  failure leaves it retryable.
+* /refund, /grant, /revoke are admin-only, silent to non-admins, and absent
+  from PUBLIC_COMMANDS. A refund only marks the row once Telegram accepted it.
+  /grant writes telegram_charge_id NULL — a placeholder is what broke the
+  index. Comps use plan 'comp', which is deliberately NOT in
+  SUBSCRIPTION_PLANS, because pre-checkout validates purchases against that map.
 * Comped subscription rows carrying a hand-typed placeholder charge id are
   nulled at startup by nullPlaceholderChargeIds() before ensureChargeIdIndex()
   runs, so idx_subscriptions_charge_id finally gets created. stars_paid = 0 is
@@ -168,16 +195,10 @@ test/                 17 files, node:test, throwaway SQLite per file, all
    posts are invisible to /summary and /find.
 2. Digest times are UTC-only with 4 fixed hour choices; there is no per-user
    timezone.
-3. No subscription-expiry reminder, no /status command, no refund handling
-   (Telegram's refundStarPayment is not wired up).
-4. /find uses LIKE '%q%' with no FTS index and no escaping of % / _ .
-5. The scheduler sends digests in a tight loop with no throttle or backoff —
-   Telegram starts 429-ing around 30 messages/second.
-6. A 403 from a user who blocked the bot leaves their digest enabled, retrying
-   daily forever.
-7. Group members who join after the bot has no way of learning it is there;
+3. /find uses LIKE '%q%' with no FTS index and no escaping of % / _ .
+4. Group members who join after the bot has no way of learning it is there;
    the join notice is posted once.
-8. getRecentMessages caps at 200 messages with no note to the user when a
+5. getRecentMessages caps at 200 messages with no note to the user when a
    busier window is truncated.
 
 
