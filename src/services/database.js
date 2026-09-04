@@ -522,13 +522,27 @@ function disableScheduledDigest(chatId, userId) {
   db.prepare('UPDATE scheduled_digests SET enabled = 0 WHERE chat_id = ? AND user_id = ?').run(chatId, userId);
 }
 
+/**
+ * The digests to deliver on this hour's tick.
+ *
+ * last_sent_at is what makes the tick safe to run twice. BullMQ retries a job
+ * that threw, and a container restart mid-tick leaves it unfinished — either
+ * one used to re-deliver every digest already sent that hour, since nothing
+ * read the column markDigestSent() writes. Comparing to the hour rather than
+ * to a duration is deliberate: a digest belongs to its hour, so a retry three
+ * minutes later and one fifty minutes later are both already-done.
+ */
 function getDueScheduledDigests(hourUtc) {
   return db
     .prepare(
       `SELECT sd.chat_id, sd.user_id, sd.hour_utc, c.title as chat_title
        FROM scheduled_digests sd
        JOIN chats c ON c.id = sd.chat_id
-       WHERE sd.enabled = 1 AND sd.hour_utc = ? AND c.is_active = 1`
+       WHERE sd.enabled = 1 AND sd.hour_utc = ? AND c.is_active = 1
+         AND (
+           sd.last_sent_at IS NULL
+           OR strftime('%Y-%m-%dT%H', sd.last_sent_at) <> strftime('%Y-%m-%dT%H', 'now')
+         )`
     )
     .all(hourUtc);
 }

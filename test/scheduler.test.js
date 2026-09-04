@@ -111,3 +111,39 @@ test('runDueDigests does not act on digests scheduled for a different hour', asy
 
   assert.equal(sentMessages.length, before);
 });
+
+test('a retried tick does not re-deliver a digest already sent this hour', async () => {
+  // BullMQ retries a job that threw, and a container restart leaves a tick
+  // unfinished — either one used to re-send every digest already delivered
+  // that hour, because nothing read the column markDigestSent() writes.
+  const userId = 305;
+  const chatId = -305;
+  db.getOrCreateUser({ id: userId, username: 'retry', firstName: 'R' });
+  db.getOrCreateChat({ id: chatId, title: 'Retried', type: 'group' });
+  db.linkUserToChat(chatId, userId);
+  db.createSubscription({
+    userId,
+    plan: 'monthly',
+    starsPaid: 300,
+    expiresAt: new Date(Date.now() + 30 * 86400000).toISOString().replace('T', ' ').slice(0, 19),
+  });
+  db.saveMessage({ chatId, messageId: 1, userId, username: 'retry', text: 'something worth summarizing' });
+  db.setScheduledDigest({ chatId, userId, hourUtc: 5 });
+
+  const before = sentMessages.length;
+  await withUtcHour(5, () => runDueDigests());
+  const afterFirst = sentMessages.length;
+  assert.ok(afterFirst > before, 'the digest is delivered on the first tick');
+
+  // The very same hour, as a retry would run it.
+  await withUtcHour(5, () => runDueDigests());
+  assert.equal(sentMessages.length, afterFirst, 'the retry delivers nothing further');
+
+  // Tomorrow's tick must still fire, so the guard is per-hour and not a
+  // permanent latch.
+  db.db
+    .prepare(`UPDATE scheduled_digests SET last_sent_at = datetime('now', '-1 days') WHERE chat_id = ? AND user_id = ?`)
+    .run(chatId, userId);
+  await withUtcHour(5, () => runDueDigests());
+  assert.ok(sentMessages.length > afterFirst, 'the next day still delivers');
+});
