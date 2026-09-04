@@ -11,13 +11,16 @@ const {
   purgeRemovedChatData,
   getUserLanguage,
   disableScheduledDigest,
+  getSubscriptionsDueForReminder,
+  markReminderSent,
   getAppState,
   setAppState,
 } = require('./database');
 const { splitForTelegram } = require('../utils/formatters');
 const { createSender, isBlockedError, isBadRequestError } = require('../utils/telegramSend');
 const { t, normalizeLanguage } = require('../utils/i18n');
-const { getLimits } = require('../models/subscription');
+const { getLimits, FREE_LIMITS, PREMIUM_LIMITS } = require('../models/subscription');
+const { planLabel } = require('../keyboards');
 const { generateDigest } = require('./digest');
 const { track, EVENTS } = require('./analytics');
 
@@ -126,6 +129,75 @@ async function runDueDigests({ sleep } = {}) {
   }
 }
 
+/**
+ * Nothing told a subscriber their period was ending. They lost premium in
+ * silence, and most people do not connect "my digest stopped" with "my
+ * subscription lapsed" - they assume the bot broke and drift away. Every lapse
+ * was a churn event nobody saw and nobody got a chance to prevent.
+ *
+ * Three stages, in half-open windows that cannot overlap, so one subscription
+ * is never caught twice on the same tick. The lower bound on the last stage
+ * matters: without it the first deploy would DM everyone who ever let a
+ * subscription lapse, months after the fact.
+ */
+const REMINDER_STAGES = [
+  { stage: 'expiring_3d', after: '+1 days', until: '+3 days', days: 3 },
+  { stage: 'expiring_1d', after: '+0 days', until: '+1 days', days: 1 },
+  { stage: 'expired', after: '-1 days', until: '+0 days', days: 0 },
+];
+
+function reminderText(lang, stage, subscription) {
+  return t(lang, `reminder.${stage.stage}`, {
+    plan: planLabel(lang, subscription.plan),
+    days: stage.days,
+    expires: String(subscription.expires_at).slice(0, 10),
+    premiumChannels: PREMIUM_LIMITS.maxChannels,
+    freeSummaries: FREE_LIMITS.maxSummariesPerDay,
+    freeGroups: FREE_LIMITS.maxGroups,
+    freeChannels: FREE_LIMITS.maxChannels,
+    freeKeywords: FREE_LIMITS.maxKeywords,
+  });
+}
+
+async function runExpiryReminders({ sleep } = {}) {
+  const sender = createSender(sleep ? { sleep } : {});
+
+  for (const stage of REMINDER_STAGES) {
+    for (const subscription of getSubscriptionsDueForReminder(stage.stage, stage.after, stage.until)) {
+      const userId = subscription.user_id;
+
+      try {
+        const lang = normalizeLanguage(getUserLanguage(userId));
+
+        await sender.send(() =>
+          telegram.sendMessage(userId, reminderText(lang, stage, subscription), {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[{ text: t(lang, 'reminder.renewButton'), callback_data: 'renew:open' }]],
+            },
+          })
+        );
+
+        // Written only after the send succeeded, for the same reason
+        // markDigestSent is: a failure has to stay retryable.
+        markReminderSent(subscription.id, stage.stage, userId);
+        track(EVENTS.REMINDER_SENT, { userId, metadata: { stage: stage.stage } });
+      } catch (error) {
+        if (isBlockedError(error)) {
+          // Recorded as dealt with even though it never arrived. They cannot be
+          // reached, and the alternative is retrying every hour for the whole
+          // window - the same unbounded waste case-11 removed for digests.
+          markReminderSent(subscription.id, stage.stage, userId);
+          logger.info('Skipping an expiry reminder for a user who blocked the bot', { userId });
+          continue;
+        }
+
+        logger.error('Expiry reminder failed', { userId, stage: stage.stage, error: error.message });
+      }
+    }
+  }
+}
+
 const RETENTION_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const SWEEP_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
@@ -219,6 +291,7 @@ function startScheduler() {
         // comparison to have a second path that would still enforce retention.
         runRetentionSweep();
         await runDueDigests();
+        await runExpiryReminders();
       }
     },
     { connection }
@@ -236,6 +309,7 @@ function startScheduler() {
 module.exports = {
   startScheduler,
   runDueDigests,
+  runExpiryReminders,
   runRetentionSweep,
   startRetentionSweeps,
 };

@@ -287,6 +287,24 @@ module.exports = {
     current: 'Current: {language}',
   },
 
+  reminder: {
+    expiring3d:
+      '⭐ Your *{plan}* subscription ends in {days} days, on {expires}.\n\n' +
+      'Renew now and nothing changes: unlimited summaries, {premiumChannels} channels, ' +
+      'and your daily digest keep running.',
+    expiring1d:
+      '⏳ Your *{plan}* subscription ends tomorrow, on {expires}.\n\n' +
+      'Renew to keep unlimited summaries, {premiumChannels} channels and your daily digest. ' +
+      'A new period is added on top of what is left, so renewing early costs you nothing.',
+    expired:
+      '🔕 Your *{plan}* subscription ended on {expires}, so you are back on the free plan: ' +
+      '{freeSummaries} summaries a day, {freeGroups} group, {freeChannels} channel, ' +
+      '{freeKeywords} keyword.\n\n' +
+      'Nothing was deleted — your groups, channels and keywords are all still there, ' +
+      'waiting. Renew and they light up again.',
+    renewButton: '⭐ Renew',
+  },
+
   status: {
     header: '📊 *Where you stand*',
     planFree: '*Plan*: Free',

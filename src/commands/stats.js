@@ -63,6 +63,12 @@ async function statsHandler(ctx) {
       `🧾 Total purchasers: ${funnel.totalPurchasers}`
   );
 
+  // Whether expiry reminders actually save subscriptions, which is the only
+  // question that decides if they are worth sending.
+  const reminderPct =
+    funnel.remindedUsers > 0 ? ((funnel.renewedAfterReminder / funnel.remindedUsers) * 100).toFixed(1) : '0.0';
+  sections.push(`🔔 *Reminder → renewal*: ${funnel.renewedAfterReminder}/${funnel.remindedUsers} (${reminderPct}%)`);
+
   // Rolling retention: of users old enough to have returned, how many did.
   const curveRows = curve
     .map((r) => `D${pad(r.days, 4)}${padLeft(formatPct(r.pct), 5)}   ${r.retained}/${r.eligible}`)

@@ -34,6 +34,10 @@ const EVENTS = {
   DIGEST_DISABLED_BLOCKED: 'digest_disabled_blocked',
   STATUS_VIEWED: 'status_viewed',
   SUBSCRIBE_VIEWED: 'subscribe_viewed',
+  // The two halves of the reminder funnel: how many nudges went out, and how
+  // many renewals followed one closely enough to credit it.
+  REMINDER_SENT: 'reminder_sent',
+  RENEWED_AFTER_REMINDER: 'renewed_after_reminder',
   SUBSCRIPTION_PURCHASED: 'subscription_purchased',
 };
 
@@ -66,11 +70,19 @@ function getFunnelReport(sinceDays) {
   const purchasedUsers = new Set(getDistinctEventUsers([EVENTS.SUBSCRIPTION_PURCHASED], sinceDays));
   const convertedFromPaywall = paywallUsers.filter((id) => purchasedUsers.has(id)).length;
 
+  // The reminder funnel, measured the same way: of the people nudged, how
+  // many then paid. This is the number that says whether feature-01 earns its
+  // place, so it is computed rather than left to be eyeballed from raw counts.
+  const remindedUsers = getDistinctEventUsers([EVENTS.REMINDER_SENT], sinceDays);
+  const renewedAfterReminder = remindedUsers.filter((id) => purchasedUsers.has(id)).length;
+
   return {
     counts,
     paywallHitUsers: paywallUsers.length,
     convertedFromPaywall,
     totalPurchasers: purchasedUsers.size,
+    remindedUsers: remindedUsers.length,
+    renewedAfterReminder,
   };
 }
 

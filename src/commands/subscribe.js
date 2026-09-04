@@ -47,8 +47,14 @@ module.exports = (bot) => {
   bot.command('subscribe', subscribeHandler);
   bot.hears(allTranslations('menu.subscribe'), subscribeHandler);
   bot.action(/^subscribe:(.+)$/, planSelected);
-};
 
-// Exported so the Subscribe button on /status opens the same flow, guards and
-// all, instead of a second copy of it that can drift.
-module.exports.subscribeHandler = subscribeHandler;
+  // The button on /status and on an expiry reminder. Registered here, next to
+  // the flow it opens, so both callers reuse the real handler - including its
+  // refusal to show the plan menu to someone already subscribed - rather than
+  // a second copy that can drift. Not part of the subscribe:<plan> pattern,
+  // which would read "open" as a plan name and answer "Unknown plan".
+  bot.action('renew:open', async (ctx) => {
+    await ctx.answerCbQuery();
+    return subscribeHandler(ctx);
+  });
+};

@@ -73,6 +73,11 @@ const PREMIUM_LIMITS = {
   maxKeywords: MAX_KEYWORDS,
 };
 
+// How recently an expiry reminder counts as the reason someone renewed. Long
+// enough to cover "I will do it at the weekend", short enough not to claim
+// credit for a renewal that had nothing to do with it.
+const RENEWAL_ATTRIBUTION_DAYS = 7;
+
 function getLimits(subscription) {
   return subscription ? PREMIUM_LIMITS : FREE_LIMITS;
 }
@@ -85,4 +90,11 @@ const subscriptionSchema = z.object({
   expiresAt: z.string().optional(),
 });
 
-module.exports = { subscriptionSchema, SUBSCRIPTION_PLANS, FREE_LIMITS, PREMIUM_LIMITS, getLimits };
+module.exports = {
+  subscriptionSchema,
+  SUBSCRIPTION_PLANS,
+  FREE_LIMITS,
+  PREMIUM_LIMITS,
+  RENEWAL_ATTRIBUTION_DAYS,
+  getLimits,
+};

@@ -125,6 +125,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_events_type_created ON events(event_type, created_at);
   CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id);
 
+  -- One row per reminder actually delivered. Keyed on the SUBSCRIPTION and
+  -- not the user, so a renewed subscriber gets a fresh set of reminders as
+  -- their new period runs down - "once per user, ever" would mean reminding a
+  -- loyal customer exactly once and never again.
+  CREATE TABLE IF NOT EXISTS subscription_reminders (
+    subscription_id INTEGER NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+    stage TEXT NOT NULL,
+    user_id INTEGER,
+    sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (subscription_id, stage)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_subscription_reminders_user ON subscription_reminders(user_id, sent_at);
+
   -- Operational bookkeeping the bot needs to remember across restarts. Not
   -- product data and never user data: nothing in here is subject to retention
   -- or /forgetme, which is why it is a table of its own rather than an event.
@@ -856,6 +870,70 @@ function setAppState(key, value) {
   ).run(key, String(value));
 }
 
+/**
+ * Subscriptions that should get the `stage` reminder and have not had it.
+ *
+ * The window is half-open and the stages do not overlap, so one subscription
+ * cannot be caught by two of them on the same tick. It is also bounded at both
+ * ends deliberately: without a lower bound, the first deploy would DM everyone
+ * who ever let a subscription lapse, months after the fact.
+ *
+ * The last clause is what stops a reminder reaching someone who has already
+ * renewed. getActiveSubscription picks the subscription running LONGEST, so a
+ * row with a longer one behind it is not the one deciding their access and
+ * there is nothing to remind them about.
+ *
+ * A NULL expires_at never matches: a comped subscription does not run out, so
+ * there is no date to warn anyone about.
+ */
+function getSubscriptionsDueForReminder(stage, afterModifier, untilModifier) {
+  return db
+    .prepare(
+      `SELECT s.* FROM subscriptions s
+       WHERE s.status = 'active'
+         AND s.expires_at IS NOT NULL
+         AND s.expires_at > datetime('now', ?)
+         AND s.expires_at <= datetime('now', ?)
+         AND NOT EXISTS (
+           SELECT 1 FROM subscription_reminders r
+           WHERE r.subscription_id = s.id AND r.stage = ?
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM subscriptions later
+           WHERE later.user_id = s.user_id
+             AND later.status = 'active'
+             AND later.id <> s.id
+             AND (later.expires_at IS NULL OR later.expires_at > s.expires_at)
+         )
+       ORDER BY s.expires_at`
+    )
+    .all(afterModifier, untilModifier, stage);
+}
+
+/**
+ * Records that a stage was dealt with, so a retried tick cannot re-notify.
+ *
+ * INSERT OR IGNORE rather than a plain insert: the primary key is the guard,
+ * and two paths reaching it is not an error worth throwing over.
+ */
+function markReminderSent(subscriptionId, stage, userId) {
+  db.prepare(
+    'INSERT OR IGNORE INTO subscription_reminders (subscription_id, stage, user_id) VALUES (?, ?, ?)'
+  ).run(subscriptionId, stage, userId || null);
+}
+
+/** Did we nudge this user recently? Used to attribute a renewal to a reminder. */
+function hasRecentReminder(userId, withinDays) {
+  return Boolean(
+    db
+      .prepare(
+        `SELECT 1 FROM subscription_reminders
+         WHERE user_id = ? AND sent_at >= datetime('now', ?) LIMIT 1`
+      )
+      .get(userId, `-${withinDays} days`)
+  );
+}
+
 function getSubscriptionByChargeId(telegramChargeId) {
   if (!telegramChargeId) return undefined;
   return db.prepare('SELECT * FROM subscriptions WHERE telegram_charge_id = ?').get(telegramChargeId);
@@ -964,6 +1042,9 @@ module.exports = {
   getWeeklyCohorts,
   getDailyActiveUsers,
   createSubscription,
+  getSubscriptionsDueForReminder,
+  markReminderSent,
+  hasRecentReminder,
   getSubscriptionByChargeId,
   getActiveSubscription,
   nullPlaceholderChargeIds,

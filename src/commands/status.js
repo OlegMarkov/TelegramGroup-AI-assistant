@@ -12,7 +12,6 @@ const { allowedKeywords } = require('../models/filter');
 const { planLabel } = require('../keyboards');
 const { escapeMarkdown, isGroupChat } = require('../utils/formatters');
 const { t } = require('../utils/i18n');
-const { subscribeHandler } = require('./subscribe');
 const { track, EVENTS } = require('../services/analytics');
 const logger = require('../utils/logger');
 
@@ -152,7 +151,7 @@ function buildStatus(ctx) {
     keyboard: offerSubscribe
       ? {
           reply_markup: {
-            inline_keyboard: [[{ text: t(lang, 'status.subscribeButton'), callback_data: 'status:subscribe' }]],
+            inline_keyboard: [[{ text: t(lang, 'status.subscribeButton'), callback_data: 'renew:open' }]],
           },
         }
       : {},
@@ -182,14 +181,8 @@ async function statusHandler(ctx) {
 
 module.exports = (bot) => {
   bot.command('status', statusHandler);
-
-  // Reuses the real /subscribe handler rather than re-implementing it, so the
-  // guard that refuses the plan menu to someone already subscribed applies to
-  // this button too.
-  bot.action('status:subscribe', async (ctx) => {
-    await ctx.answerCbQuery();
-    return subscribeHandler(ctx);
-  });
+  // The renew:open button it draws is registered by subscribe.js, alongside
+  // the flow it opens.
 };
 
 module.exports.buildStatus = buildStatus;

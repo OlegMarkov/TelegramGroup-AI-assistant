@@ -1,5 +1,5 @@
-const { SUBSCRIPTION_PLANS } = require('../models/subscription');
-const { createSubscription, getActiveSubscription, getSubscriptionByChargeId } = require('./database');
+const { SUBSCRIPTION_PLANS, RENEWAL_ATTRIBUTION_DAYS } = require('../models/subscription');
+const { createSubscription, getActiveSubscription, getSubscriptionByChargeId, hasRecentReminder } = require('./database');
 const { formatDate } = require('../utils/formatters');
 const { planLabel } = require('../keyboards');
 const { t, DEFAULT_LANGUAGE } = require('../utils/i18n');
@@ -115,6 +115,13 @@ async function handleSuccessfulPayment(ctx) {
     expiresAt,
   });
   track(EVENTS.SUBSCRIPTION_PURCHASED, { userId: ctx.from.id, metadata: { plan: planKey, stars: payment.total_amount } });
+
+  // Tracked separately from the purchase so the reminder-to-renewal rate can be
+  // read straight off /stats, rather than inferred by joining two event streams
+  // by hand. Attribution is deliberately crude: a nudge in the last week.
+  if (hasRecentReminder(ctx.from.id, RENEWAL_ATTRIBUTION_DAYS)) {
+    track(EVENTS.RENEWED_AFTER_REMINDER, { userId: ctx.from.id, metadata: { plan: planKey } });
+  }
 
   await ctx.reply(
     t(lang, 'subscribe.thanks', { label: planLabel(lang, planKey), expires: expiresAt })

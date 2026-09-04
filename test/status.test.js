@@ -132,7 +132,7 @@ test('the Subscribe button appears at the wall, and not before it', async () => 
   for (let i = 0; i < FREE_LIMITS.maxSummariesPerDay - 1; i++) db.incrementSummaryUsage(comfortable);
   const atWall = await runStatus({ userId: comfortable });
   assert.ok(atWall.extra.reply_markup, 'a user at the edge of the free plan gets the button');
-  assert.equal(atWall.extra.reply_markup.inline_keyboard[0][0].callback_data, 'status:subscribe');
+  assert.equal(atWall.extra.reply_markup.inline_keyboard[0][0].callback_data, 'renew:open');
 
   // A subscriber is never pitched, however much they have used.
   const paid = 404;
