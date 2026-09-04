@@ -37,6 +37,7 @@ module.exports = {
     cancel: 'Cancel',
     done: 'Done',
     chatFallback: 'Chat {id}',
+    tooManyRequests: '⏳ Too many requests. Please try again in {seconds}s.',
   },
 
   start: {
