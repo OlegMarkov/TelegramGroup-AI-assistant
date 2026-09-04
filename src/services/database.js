@@ -410,13 +410,31 @@ function saveMessage({ chatId, messageId, userId, username, text, createdAt }) {
   ).run(chatId, messageId, userId || null, username || null, text, createdAt || new Date().toISOString());
 }
 
+/**
+ * The window of conversation to summarize: the *newest* `limit` messages
+ * inside the lookback period, returned oldest-first so the transcript reads in
+ * order.
+ *
+ * The nesting is the whole point. A plain `ORDER BY created_at ASC LIMIT 200`
+ * takes the OLDEST 200 in the window, so a group busier than the cap was
+ * summarized from the start of yesterday and everything since was silently
+ * dropped — a wrong answer that looks exactly like a right one. It also froze
+ * the digest cache: fingerprintMessages() keys on the highest message id, and
+ * with the newest messages cut off, new arrivals never changed it, so the
+ * stale summary was served back indefinitely.
+ *
+ * id breaks the tie because created_at is stored to the second and a busy
+ * group puts many messages in one.
+ */
 function getRecentMessages(chatId, { hours = 24, limit = 200 } = {}) {
   return db
     .prepare(
-      `SELECT * FROM messages
-       WHERE chat_id = ? AND created_at >= datetime('now', ?)
-       ORDER BY created_at ASC
-       LIMIT ?`
+      `SELECT * FROM (
+         SELECT * FROM messages
+         WHERE chat_id = ? AND created_at >= datetime('now', ?)
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?
+       ) ORDER BY created_at ASC, id ASC`
     )
     .all(chatId, `-${hours} hours`, limit);
 }

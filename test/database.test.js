@@ -201,3 +201,34 @@ test('group-count limit helpers: isChatWithinFreeLimit and getAllowedUserChats',
 
   assert.equal(db.getAllowedUserChats(12, Infinity).length, 2);
 });
+
+test('getRecentMessages returns the NEWEST messages in the window, not the oldest', () => {
+  db.getOrCreateUser({ id: 13, username: 'm', firstName: 'M' });
+  db.getOrCreateChat({ id: -11, title: 'Busy', type: 'supergroup' });
+
+  // More messages than the cap, all inside the lookback window.
+  const now = Date.now();
+  for (let i = 0; i < 250; i += 1) {
+    db.saveMessage({
+      chatId: -11,
+      messageId: i,
+      userId: 13,
+      username: 'm',
+      text: `msg ${i}`,
+      // Oldest first, so message 249 is the most recent.
+      createdAt: new Date(now - (250 - i) * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19),
+    });
+  }
+
+  const recent = db.getRecentMessages(-11, { hours: 24, limit: 200 });
+
+  assert.equal(recent.length, 200);
+  // The bug this guards: taking the oldest 200 meant a busy group was
+  // summarized from the start of the window and everything since was dropped.
+  assert.equal(recent[recent.length - 1].text, 'msg 249', 'the newest message must be included');
+  assert.equal(recent[0].text, 'msg 50', 'the oldest 50 are what falls off the cap');
+
+  // Still oldest-first, so the transcript handed to the model reads in order.
+  const times = recent.map((m) => m.created_at);
+  assert.deepEqual(times, [...times].sort(), 'results must stay in chronological order');
+});
