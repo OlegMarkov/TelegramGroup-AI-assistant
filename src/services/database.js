@@ -124,6 +124,15 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_events_type_created ON events(event_type, created_at);
   CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id);
+
+  -- Operational bookkeeping the bot needs to remember across restarts. Not
+  -- product data and never user data: nothing in here is subject to retention
+  -- or /forgetme, which is why it is a table of its own rather than an event.
+  CREATE TABLE IF NOT EXISTS app_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // CREATE TABLE IF NOT EXISTS silently does nothing on a database that already
@@ -806,6 +815,18 @@ function getDailyActiveUsers(days = 14) {
     .all(`-${days} days`);
 }
 
+function getAppState(key) {
+  const row = db.prepare('SELECT value FROM app_state WHERE key = ?').get(key);
+  return row ? row.value : null;
+}
+
+function setAppState(key, value) {
+  db.prepare(
+    `INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).run(key, String(value));
+}
+
 function getSubscriptionByChargeId(telegramChargeId) {
   if (!telegramChargeId) return undefined;
   return db.prepare('SELECT * FROM subscriptions WHERE telegram_charge_id = ?').get(telegramChargeId);
@@ -917,4 +938,6 @@ module.exports = {
   getActiveSubscription,
   nullPlaceholderChargeIds,
   ensureChargeIdIndex,
+  getAppState,
+  setAppState,
 };

@@ -1,5 +1,6 @@
 const config = require('../config');
 const { getFunnelReport, getRetentionReport } = require('../services/analytics');
+const { getAppState } = require('../services/database');
 
 const DEFAULT_DAYS = 30;
 
@@ -43,6 +44,17 @@ async function statsHandler(ctx) {
     .map((c) => `${pad(c.event_type, 30)}${padLeft(c.count, 6)}${padLeft(c.unique_users, 7)}`)
     .join('\n');
   sections.push(`\`\`\`\n${pad('event', 30)}${padLeft('count', 6)}${padLeft('users', 7)}\n${eventRows}\n\`\`\``);
+
+  // Retention is a promise in PRIVACY.md, and the way it fails is silently —
+  // the bot keeps working while nothing is being deleted. This is the one
+  // place that answers "is it actually running?" without reading logs.
+  const sweptAt = Number(getAppState('retention_swept_at'));
+  const sweptAgo = Number.isFinite(sweptAt) && sweptAt > 0 ? Math.round((Date.now() - sweptAt) / 60000) : null;
+  sections.push(
+    sweptAgo === null
+      ? '🧹 *Retention*: no sweep has completed yet'
+      : `🧹 *Retention*: last swept ${sweptAgo} min ago`
+  );
 
   const conversionPct =
     funnel.paywallHitUsers > 0 ? ((funnel.convertedFromPaywall / funnel.paywallHitUsers) * 100).toFixed(1) : '0.0';

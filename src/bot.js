@@ -10,7 +10,7 @@ const ingestion = require('./middleware/ingestion');
 
 const { handlePreCheckoutQuery, handleSuccessfulPayment } = require('./services/payments');
 const { startWorker } = require('./services/queue');
-const { startScheduler } = require('./services/scheduler');
+const { startScheduler, startRetentionSweeps } = require('./services/scheduler');
 const { getOrCreateChat, linkUserToChat, deactivateChat } = require('./services/database');
 const { isGroupChat } = require('./utils/formatters');
 const { t, DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, PUBLIC_COMMANDS } = require('./utils/i18n');
@@ -110,6 +110,9 @@ function isPollingAlive() {
 async function main() {
   const worker = startWorker();
   const schedulerWorker = startScheduler();
+  // Deliberately not part of the scheduler: retention is a promise made in
+  // PRIVACY.md, and it must not stop being kept because Redis is down.
+  const stopRetentionSweeps = startRetentionSweeps();
   let stopHeartbeat = () => {};
   let shuttingDown = false;
 
@@ -117,6 +120,7 @@ async function main() {
     shuttingDown = true;
     logger.info(`Received ${signal}, shutting down...`);
     stopHeartbeat();
+    stopRetentionSweeps();
     bot.stop(signal);
     await Promise.all([worker.close(), schedulerWorker.close()]);
     process.exit(0);
@@ -154,6 +158,7 @@ async function main() {
   if (!shuttingDown) {
     logger.error('Telegram polling stopped unexpectedly — exiting so the container restarts');
     stopHeartbeat();
+    stopRetentionSweeps();
     await Promise.all([worker.close(), schedulerWorker.close()]).catch(() => {});
     process.exit(1);
   }

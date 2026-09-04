@@ -63,7 +63,8 @@ src/services/
   channelSource.js    t.me/s/<handle> scraper: handle validation, HTML parse,
                       dedupe, pagination.
   filterMatcher.js    Bilingual category vocabularies + regex matcher.
-  scheduler.js        Hourly BullMQ tick -> due digests + retention sweep.
+  scheduler.js        Hourly BullMQ tick -> due digests. Retention sweeps run
+                      on a plain unref'd setInterval, independent of Redis.
   payments.js         Stars invoice, pre_checkout, successful_payment.
   analytics.js        track() (fire-and-forget) + report builders.
   queue.js            ioredis connection + BullMQ worker.
@@ -147,15 +148,19 @@ test/                 17 files, node:test, throwaway SQLite per file, all
   cannot re-send a digest already delivered that hour.
 * The rate-limit refusal is localized (it runs before auth(), so it reads the
   stored language only on the rejection path), and its map is swept.
-* Comped subscription rows carrying a hand-typed placeholder charge id are
-  nulled at startup by nullPlaceholderChargeIds() before ensureChargeIdIndex()
-  runs, so idx_subscriptions_charge_id finally gets created. stars_paid = 0 is
-  the signal: a row where no stars moved cannot be a real Telegram charge.
+* Retention no longer rides the Redis-backed tick. startRetentionSweeps() runs
+  it on an unref'd hourly setInterval plus once at boot; the tick still calls it
+  behind a 5-minute gap guard. The last successful sweep is persisted in the new
+  app_state table, shown in /stats, and warned about after 24h.
 * PRIVACY.md and the /privacy copy now name DeepSeek and say it processes in
   China, state exactly what is sent (sender name + first 300 chars per group
   message, 600 per channel post, no identifiers) and what never is (/find never
   leaves the server), and describe the summary cache's lifetime. The 300 comes
   from digest.js's exported GROUP_MESSAGE_CHARS, not from the copy.
+* Comped subscription rows carrying a hand-typed placeholder charge id are
+  nulled at startup by nullPlaceholderChargeIds() before ensureChargeIdIndex()
+  runs, so idx_subscriptions_charge_id finally gets created. stars_paid = 0 is
+  the signal: a row where no stars moved cannot be a real Telegram charge.
 
 ## KNOWN OPEN ISSUES (verified 2026-09-05, not yet fixed)
 
@@ -170,11 +175,9 @@ test/                 17 files, node:test, throwaway SQLite per file, all
    Telegram starts 429-ing around 30 messages/second.
 6. A 403 from a user who blocked the bot leaves their digest enabled, retrying
    daily forever.
-7. Retention enforcement rides the Redis-backed hourly tick, so a long Redis
-   outage means retaining data past what PRIVACY.md promises.
-8. Group members who join after the bot has no way of learning it is there;
+7. Group members who join after the bot has no way of learning it is there;
    the join notice is posted once.
-9. getRecentMessages caps at 200 messages with no note to the user when a
+8. getRecentMessages caps at 200 messages with no note to the user when a
    busier window is truncated.
 
 
@@ -187,8 +190,9 @@ MESSAGE_RETENTION_DAYS (90), PURGE_AFTER_REMOVAL_DAYS (7), LOG_LEVEL.
 BotFather setup: /setprivacy -> DISABLE (required, or the bot cannot see group
 messages at all).
 
-Redis must be up for scheduled digests AND for retention enforcement (both ride
-the same hourly tick). On-demand /summary and /find work without it.
+Redis must be up for scheduled digests. Retention enforcement does NOT need it:
+it runs on its own hourly interval in the bot process, and the last successful
+sweep is reported in /stats. On-demand /summary and /find work without Redis.
 
 Backup: docker compose exec bot node -e "...VACUUM INTO..." — a plain file copy
 can miss data in bot.db-wal.

@@ -10,6 +10,8 @@ const {
   purgeExpiredMessages,
   purgeRemovedChatData,
   getUserLanguage,
+  getAppState,
+  setAppState,
 } = require('./database');
 const { splitForTelegram } = require('../utils/formatters');
 const { t, normalizeLanguage } = require('../utils/i18n');
@@ -84,10 +86,45 @@ async function runDueDigests() {
   }
 }
 
-function runRetentionSweep() {
+const RETENTION_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+const SWEEP_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+// Two callers now drive the sweep — the timer below and the BullMQ tick — and a
+// sweep this recent has already deleted everything another one would find. The
+// gap makes the second caller free rather than making it a special case.
+const SWEEP_MIN_GAP_MS = 5 * 60 * 1000;
+
+// Persisted rather than held in memory, because the question it answers — "is
+// retention actually running?" — has to survive a restart to be worth asking.
+// A bot that crash-loops every hour would otherwise reset the clock on every
+// boot and never look overdue, which is precisely the silent failure this is
+// here to make visible.
+const LAST_SWEEP_KEY = 'retention_swept_at';
+
+function readLastSweepAt() {
+  const stored = Number(getAppState(LAST_SWEEP_KEY));
+  return Number.isFinite(stored) && stored > 0 ? stored : null;
+}
+
+/**
+ * Deletes what retention says should be gone.
+ *
+ * PRIVACY.md promises messages are deleted after a fixed number of days. That
+ * promise used to be kept only while Redis was up, because the sweep rode the
+ * BullMQ tick — so a long Redis outage meant the bot kept answering perfectly
+ * while quietly retaining data past what its own policy allows. Nothing looked
+ * wrong, which is what made it worth fixing over an outage that announces
+ * itself. It is a synchronous SQLite delete with no queue semantics; it never
+ * needed a job queue in the first place.
+ */
+function runRetentionSweep({ force = false } = {}) {
+  const lastSweepAt = readLastSweepAt();
+  if (!force && lastSweepAt !== null && Date.now() - lastSweepAt < SWEEP_MIN_GAP_MS) return false;
+
   try {
     const expired = purgeExpiredMessages(config.privacy.messageRetentionDays);
     const removed = purgeRemovedChatData(config.privacy.purgeAfterRemovalDays);
+    setAppState(LAST_SWEEP_KEY, Date.now());
 
     if (expired > 0 || removed.messages > 0) {
       logger.info('Retention sweep completed', {
@@ -96,9 +133,40 @@ function runRetentionSweep() {
         removedChatMessages: removed.messages,
       });
     }
+    return true;
   } catch (error) {
+    // The stored timestamp is deliberately not advanced: a failing sweep has
+    // to go stale and trip the warning below, rather than look like it ran.
     logger.error('Retention sweep failed', { error: error.message });
+    return false;
   }
+}
+
+/**
+ * Runs the sweep on a plain timer, independent of Redis, BullMQ and Telegram.
+ *
+ * unref'd so it can never be the reason the process stays alive — the same
+ * treatment uiState gives its cleanup timer.
+ */
+function startRetentionSweeps() {
+  runRetentionSweep({ force: true });
+
+  const timer = setInterval(() => {
+    runRetentionSweep();
+
+    // A sweep that silently stopped working is the failure this whole change
+    // is about, so it has to be visible somewhere other than an absence of
+    // log lines.
+    const lastSweepAt = readLastSweepAt();
+    if (lastSweepAt === null || Date.now() - lastSweepAt > SWEEP_STALE_AFTER_MS) {
+      logger.warn('Retention has not swept successfully in over 24 hours — data may be past its promised expiry', {
+        hoursSinceLastSweep: lastSweepAt === null ? 'never' : Math.round((Date.now() - lastSweepAt) / 3600000),
+      });
+    }
+  }, RETENTION_SWEEP_INTERVAL_MS);
+
+  timer.unref();
+  return () => clearInterval(timer);
 }
 
 function startScheduler() {
@@ -106,6 +174,9 @@ function startScheduler() {
     QUEUE_NAME,
     async (job) => {
       if (job.name === TICK_JOB_NAME) {
+        // Redundant with the timer in startRetentionSweeps, and kept anyway:
+        // the gap guard makes it a no-op in the normal case, and it costs one
+        // comparison to have a second path that would still enforce retention.
         runRetentionSweep();
         await runDueDigests();
       }
@@ -122,4 +193,9 @@ function startScheduler() {
   return worker;
 }
 
-module.exports = { startScheduler, runDueDigests, runRetentionSweep };
+module.exports = {
+  startScheduler,
+  runDueDigests,
+  runRetentionSweep,
+  startRetentionSweeps,
+};

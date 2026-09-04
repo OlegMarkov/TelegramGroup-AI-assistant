@@ -28,7 +28,7 @@ Telegram.prototype.sendMessage = async function (chatId, text) {
 
 const db = require('../src/services/database');
 const { connection } = require('../src/services/queue');
-const { runDueDigests } = require('../src/services/scheduler');
+const { runDueDigests, runRetentionSweep, startRetentionSweeps } = require('../src/services/scheduler');
 
 test.after(async () => {
   db.db.close();
@@ -146,4 +146,55 @@ test('a retried tick does not re-deliver a digest already sent this hour', async
     .run(chatId, userId);
   await withUtcHour(5, () => runDueDigests());
   assert.ok(sentMessages.length > afterFirst, 'the next day still delivers');
+});
+
+test('retention sweeps run and delete without Redis, because a privacy promise cannot depend on a cache', async () => {
+  // This whole file runs with REDIS_PORT pointed at a guaranteed-closed port,
+  // so the sweep completing here IS the assertion: retention used to ride the
+  // BullMQ tick, which meant a Redis outage silently stopped enforcing the
+  // deletion PRIVACY.md promises, while the bot carried on looking healthy.
+  assert.notEqual(connection.status, 'ready', 'the point of this test is that Redis is unreachable');
+
+  db.getOrCreateUser({ id: 320, username: 'ret', firstName: 'R' });
+  db.getOrCreateChat({ id: -320, title: 'Ageing', type: 'group' });
+  db.saveMessage({
+    chatId: -320,
+    messageId: 1,
+    userId: 320,
+    username: 'ret',
+    text: 'past its retention window',
+    createdAt: '2000-01-01T00:00:00.000Z',
+  });
+  db.saveMessage({ chatId: -320, messageId: 2, userId: 320, username: 'ret', text: 'recent' });
+
+  // A chat the bot was removed from, past the grace period.
+  db.getOrCreateChat({ id: -321, title: 'Removed', type: 'group' });
+  db.saveMessage({ chatId: -321, messageId: 1, userId: 320, username: 'ret', text: 'orphaned' });
+  db.deactivateChat(-321);
+  db.db
+    .prepare(`UPDATE chats SET deactivated_at = datetime('now', '-30 days') WHERE id = -321`)
+    .run();
+
+  const stop = startRetentionSweeps();
+  try {
+    const kept = db.db.prepare('SELECT text FROM messages WHERE chat_id = -320').all();
+    assert.deepEqual(kept.map((m) => m.text), ['recent'], 'only the expired message is deleted');
+    assert.equal(
+      db.db.prepare('SELECT COUNT(*) c FROM messages WHERE chat_id = -321').get().c,
+      0,
+      'a chat the bot was removed from is purged after the grace period'
+    );
+
+    // Persisted, so a restart cannot reset the clock and hide a sweep that
+    // stopped happening.
+    const sweptAt = Number(db.getAppState('retention_swept_at'));
+    assert.ok(sweptAt > 0 && Date.now() - sweptAt < 60000);
+
+    // The BullMQ tick still calls the sweep. With the timer having just run
+    // one, the second caller must be a no-op rather than duplicated work.
+    assert.equal(runRetentionSweep(), false, 'a sweep this recent is skipped');
+    assert.equal(runRetentionSweep({ force: true }), true, 'and force still overrides the gap');
+  } finally {
+    stop();
+  }
 });

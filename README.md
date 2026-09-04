@@ -93,7 +93,8 @@ This bot stores other people's group messages and sends them to a third-party AI
 
 - Group messages are deleted after `MESSAGE_RETENTION_DAYS` (default **90**). Summaries only ever look back 72h, so this window exists purely to keep `/find` useful — shorten it if search history matters less to you than holding less data.
 - When the bot is removed from a group, that chat's messages are purged after `PURGE_AFTER_REMOVAL_DAYS` (default **7**). The grace period means an accidental removal doesn't destroy history; re-adding the bot within it cancels the pending purge.
-- Both sweeps run on the same hourly scheduler tick as digests (`runRetentionSweep` in `src/services/scheduler.js`), so **Redis must be running for retention to be enforced**. If Redis is down, messages accumulate past their expiry until it comes back.
+- Both sweeps run hourly on a plain `setInterval` inside the bot process (`startRetentionSweeps` in `src/services/scheduler.js`), plus once at startup. **They do not depend on Redis** — a promise made in a privacy policy should not stop being kept because a cache is down, and that failure is invisible from the outside: the bot answers normally the whole time. The Redis-backed hourly tick still calls the sweep too, but a five-minute gap guard makes the second caller a no-op.
+- The timestamp of the last successful sweep is stored in `app_state` and shown in `/stats`, so "is retention actually running?" has an answer that isn't grepping logs. If no sweep has succeeded in 24 hours, the bot logs a warning.
 - `/forgetme` deletes a user's messages, group links, filters, digests, and usage counters, and anonymizes their analytics events. It deliberately keeps their subscription record so billing history and remaining paid time survive, and it invalidates cached summaries for affected chats so deleted text doesn't live on inside a cached summary.
 
 The bot posts a data-collection notice when it joins a group. If you change the retention defaults, update [PRIVACY.md](PRIVACY.md) to match — the `/privacy` command reads the live config, but the policy file does not.
@@ -246,7 +247,7 @@ docker compose logs bot | grep "Bot launched"        # confirms Telegram connect
 docker compose exec redis redis-cli ZRANGE bull:scheduler-jobs:repeat 0 -1 WITHSCORES
 ```
 
-The last command should print a timestamp for the next top-of-the-hour tick — that job drives both scheduled digests and the retention sweep, so if it's missing, neither will run.
+The last command should print a timestamp for the next top-of-the-hour tick — that job drives scheduled digests, so if it's missing, they will not be delivered. Retention no longer depends on it; check the last sweep time in `/stats` instead.
 
 ### Operational notes
 
