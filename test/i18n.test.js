@@ -16,6 +16,7 @@ const {
   isMenuButtonText,
   normalizeLanguage,
   MENU_KEYS,
+  PUBLIC_COMMANDS,
   SUPPORTED_LANGUAGES,
   DEFAULT_LANGUAGE,
 } = require('../src/utils/i18n');
@@ -23,6 +24,7 @@ const { mainMenu } = require('../src/keyboards');
 const en = require('../src/locales/en');
 const ru = require('../src/locales/ru');
 const db = require('../src/services/database');
+const { FREE_LIMITS, PREMIUM_LIMITS } = require('../src/models/subscription');
 
 test.after(() => {
   db.db.close();
@@ -141,4 +143,65 @@ test('getUserLanguage returns null when unset, so callers can fall back', () => 
   db.getOrCreateUser({ id: 701, username: 'no_lang', firstName: 'N' });
   assert.equal(db.getUserLanguage(701), null);
   assert.equal(normalizeLanguage(db.getUserLanguage(701)), DEFAULT_LANGUAGE);
+});
+
+test('every command published to Telegram has a description in every language', () => {
+  // setMyCommands rejects the whole list if one description is missing, and it
+  // runs at startup where nobody is watching — so the gap has to fail here.
+  assert.ok(PUBLIC_COMMANDS.length > 0);
+  assert.ok(
+    !PUBLIC_COMMANDS.includes('stats'),
+    '/stats is admin-only and its existence is meant to stay undiscoverable'
+  );
+
+  for (const command of PUBLIC_COMMANDS) {
+    for (const lang of SUPPORTED_LANGUAGES) {
+      const description = t(lang, `commands.${command}`);
+      assert.notEqual(description, `commands.${command}`, `no ${lang} description for /${command}`);
+      assert.ok(description.length <= 256, `${lang} description for /${command} is too long for Telegram`);
+      assert.ok(!description.includes('\n'), `${lang} description for /${command} must be one line`);
+    }
+  }
+});
+
+test('every command in the guide and the greeting is one the bot actually answers', () => {
+  // Copy drifts faster than code: a command named in the instructions but never
+  // registered is a dead end the user finds before we do.
+  const known = new Set([...PUBLIC_COMMANDS, 'addchannel', 'removechannel', 'setprivacy']);
+
+  for (const lang of SUPPORTED_LANGUAGES) {
+    const copy = [t(lang, 'help.text'), t(lang, 'start.greeting'), t(lang, 'onboarding.joined')].join('\n');
+    // Anchored to a word boundary, so "replies/mentions" reads as prose.
+    for (const [, command] of copy.matchAll(/(?:^|[\s(])\/([a-z]+)/gm)) {
+      assert.ok(known.has(command), `"/${command}" is offered in the ${lang} copy but is not a command`);
+    }
+  }
+});
+
+test('the guide is one sendable Telegram message with balanced Markdown', () => {
+  const params = {
+    freeSummaries: FREE_LIMITS.maxSummariesPerDay,
+    freeHours: FREE_LIMITS.maxLookbackHours,
+    premiumHours: PREMIUM_LIMITS.maxLookbackHours,
+    freeGroups: FREE_LIMITS.maxGroups,
+    freeChannels: FREE_LIMITS.maxChannels,
+    premiumChannels: PREMIUM_LIMITS.maxChannels,
+    freeKeywords: FREE_LIMITS.maxKeywords,
+    premiumKeywords: PREMIUM_LIMITS.maxKeywords,
+  };
+
+  for (const lang of SUPPORTED_LANGUAGES) {
+    const text = t(lang, 'help.text', params);
+
+    assert.ok(text.length <= 4096, `the ${lang} guide is ${text.length} chars — Telegram caps a message at 4096`);
+    assert.ok(!text.includes('{'), `the ${lang} guide still has an unfilled placeholder`);
+    assert.ok(!text.includes('Infinity'), `the ${lang} guide prints Infinity instead of saying "unlimited"`);
+
+    // Telegram rejects a message whose legacy-Markdown entities do not close,
+    // so an odd count means the guide would never be delivered at all.
+    for (const [name, char] of [['bold', '*'], ['code', '`'], ['italic', '_']]) {
+      const count = text.split(char).length - 1;
+      assert.equal(count % 2, 0, `unbalanced ${name} marker (${char}) in the ${lang} guide`);
+    }
+  }
 });

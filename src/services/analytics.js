@@ -10,6 +10,7 @@ const {
 
 const EVENTS = {
   USER_STARTED: 'user_started',
+  HELP_VIEWED: 'help_viewed',
   CHAT_LINKED: 'chat_linked',
   SUMMARY_REQUESTED: 'summary_requested',
   SUMMARY_COMPLETED: 'summary_completed',

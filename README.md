@@ -5,6 +5,7 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 ## Features
 
 - `/start` — welcome message and main menu
+- `/help` — the full guide: how to connect a group or a channel, what each command does, and what the free plan covers
 - `/summary [hours]` — AI-generated summary of a group's recent activity. Run inside a group to summarize it directly, or in DM to pick from your linked groups.
 - `/find <query>` — search a group's message history (or across all your linked groups, from DM)
 - `/filter` — pick topics, and add keywords of your own, that get highlighted as a separate "matches your filters" block in summaries. Topics are toggles and free for everyone; keywords are a second screen (1 on the free plan, 20 with premium) where ➕ takes a whole list in one message (one per line or comma separated, phrases included) and 🗑 removes whatever you tick. Keywords match as stems, so `release` also finds `releases`
@@ -15,6 +16,10 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 - `/privacy` — what the bot stores, who sees it, and how long it's kept
 - `/forgetme` — permanently delete your own stored messages and settings
 - `/stats [days]` — admin-only: usage and free→paid conversion report (default 30 days)
+
+Everything except `/stats` is published to Telegram's "/" menu at startup by `publishCommandMenu()` in [`src/bot.js`](src/bot.js), in each supported language, with descriptions from the `commands.*` translations. `/stats` is left out on purpose: not advertising it is what keeps non-admins from discovering it exists.
+
+The user-facing copy lives entirely in [`src/locales/en.js`](src/locales/en.js) and [`src/locales/ru.js`](src/locales/ru.js). Every limit it quotes is interpolated from `FREE_LIMITS` / `PREMIUM_LIMITS` rather than typed into the sentence, so the instructions cannot drift from what the code actually allows. Tests in [`test/i18n.test.js`](test/i18n.test.js) hold the two locales to the same keys and placeholders, check that every command named in the greeting or the guide is one the bot really answers, and check that the guide still fits in a single Telegram message with balanced Markdown.
 
 ## Free vs. premium
 

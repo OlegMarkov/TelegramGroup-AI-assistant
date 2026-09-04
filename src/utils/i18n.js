@@ -52,6 +52,7 @@ const MENU_KEYS = [
   'menu.subscribe',
   'menu.language',
   'menu.privacy',
+  'menu.help',
 ];
 
 const MENU_BUTTON_TEXTS = new Set(MENU_KEYS.flatMap((key) => allTranslations(key)));
@@ -68,6 +69,28 @@ function isMenuButtonText(text) {
   return typeof text === 'string' && MENU_BUTTON_TEXTS.has(text.trim());
 }
 
+
+/**
+ * Every command published to the "/" menu Telegram shows in the compose bar,
+ * in the order users see it. Each one needs a `commands.<name>` translation.
+ *
+ * /stats is deliberately absent: it is admin-only, and not advertising it is
+ * how non-admins are kept from discovering that it exists.
+ */
+const PUBLIC_COMMANDS = [
+  'start',
+  'help',
+  'summary',
+  'find',
+  'filter',
+  'channels',
+  'digest',
+  'subscribe',
+  'language',
+  'privacy',
+  'forgetme',
+];
+
 /** Map a Telegram `language_code` (e.g. "ru-RU") onto a supported language. */
 function normalizeLanguage(code) {
   if (!code) return DEFAULT_LANGUAGE;
@@ -81,6 +104,7 @@ module.exports = {
   isMenuButtonText,
   normalizeLanguage,
   MENU_KEYS,
+  PUBLIC_COMMANDS,
   SUPPORTED_LANGUAGES,
   DEFAULT_LANGUAGE,
 };

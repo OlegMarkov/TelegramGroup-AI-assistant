@@ -12,6 +12,23 @@ module.exports = {
     subscribe: '⭐ Subscribe',
     language: '🌐 Language',
     privacy: '🔒 Privacy',
+    help: 'ℹ️ Help',
+  },
+
+  // One line each, published to Telegram's "/" menu. Kept short on purpose:
+  // the client truncates them, and they are read while scrolling a list.
+  commands: {
+    start: 'Start over and show the main menu',
+    help: 'How I work — the full guide',
+    summary: 'Summarize what you missed',
+    find: 'Search the history of your groups',
+    filter: 'Topics and keywords to highlight',
+    channels: 'Public channels you follow',
+    digest: 'Daily digest by DM (premium)',
+    subscribe: 'Go premium with Telegram Stars',
+    language: 'Switch language / сменить язык',
+    privacy: 'What I store and for how long',
+    forgetme: 'Delete all my data',
   },
 
   common: {
@@ -24,18 +41,57 @@ module.exports = {
 
   start: {
     greeting:
-      "👋 Hi {name}! I'm your AI assistant bot for busy group chats.\n\n" +
-      'Add me to a group to get started, then:\n' +
-      '📝 /summary [hours] — AI summary of recent activity (free: {freeSummaries}/day, up to {freeHours}h)\n' +
-      "🔎 /find <query> — search that group's message history\n" +
-      '🎯 /filter — topics and your own keywords, highlighted in summaries ' +
-      '(free: {freeKeywords} keyword, premium: {premiumKeywords})\n' +
-      '📢 /channels — summarize public channels (free: {freeChannels}, premium: {premiumChannels})\n' +
-      '📅 /digest — premium: automatic daily digest sent to your DM\n' +
-      '⭐ /subscribe — unlimited summaries, longer lookback, and daily digests\n' +
-      '🌐 /language — change language\n' +
-      '🔒 /privacy — what I store and how to delete it\n\n' +
-      "You can also run these commands here in DM once you've linked a group.",
+      "👋 Hi {name}! I'm your AI assistant for busy chats — I read them so you don't have to.\n\n" +
+      '*Two ways to start*\n' +
+      '💬 Add me to a group, then run /summary there to see what you missed.\n' +
+      '📢 Or follow a public channel with /channels — no group needed.\n\n' +
+      '*Then, from right here in DM*\n' +
+      '📝 /summary — the last few hours in a few lines ' +
+      '(free: {freeSummaries} a day, up to {freeHours}h back)\n' +
+      '🔎 /find <words> — search what was said in your groups\n' +
+      '🎯 /filter — topics and keywords of your own ' +
+      '({freeKeywords} free, {premiumKeywords} with premium), pulled out of every summary\n' +
+      '📢 /channels — public channels ({freeChannels} free, {premiumChannels} with premium)\n' +
+      '📅 /digest — premium: a summary by DM every day, at an hour you pick\n' +
+      '⭐ /subscribe — unlimited summaries, longer lookback, daily digests\n\n' +
+      'ℹ️ /help for the full guide, 🔒 /privacy for what I store.\n' +
+      'Or just tap the buttons below.',
+  },
+
+  help: {
+    text:
+      '🤖 *How I work*\n\n' +
+      'Point me at a chat and I tell you what you missed — a few lines instead of a few hundred messages.\n\n' +
+      '*Setting me up*\n' +
+      '💬 *Groups* — add me to one and I start keeping track. If I stay quiet, whoever owns this bot has to ' +
+      'turn off privacy mode in @BotFather → /setprivacy → Disable; until then Telegram only shows me ' +
+      'messages that mention or reply to me.\n' +
+      '📢 *Channels* — /channels follows any public channel. Nothing to install, and no group required.\n\n' +
+      '*Day to day*\n' +
+      '📝 /summary — what happened recently. Add hours to look further back, like `/summary 12`. ' +
+      'In a group it summarizes that group; in DM I ask which chat you mean.\n' +
+      '🔎 /find <words> — search everything I have stored for your groups, e.g. `/find deploy schedule`. ' +
+      'Channel posts are read live and never stored, so they are not searchable.\n' +
+      '🎯 /filter — pick topics, and add keywords of your own: a project, a product, your name. ' +
+      'Anything matching gets its own block at the end of every summary. ' +
+      'Endings count too — "release" also finds "releases".\n' +
+      '📢 /channels — your channel list. Tap to select, ➕ to add, 🗑 to remove. ' +
+      '`/addchannel @name` and `/removechannel @name` work too.\n' +
+      '📅 /digest — premium: have the summary arrive by DM every day, at an hour you choose (UTC).\n\n' +
+      '*Free vs. premium*\n' +
+      '• Summaries — {freeSummaries} a day → unlimited\n' +
+      '• Lookback — {freeHours}h → {premiumHours}h\n' +
+      '• Groups — {freeGroups} → unlimited\n' +
+      '• Channels — {freeChannels} → {premiumChannels}\n' +
+      '• Keywords of your own — {freeKeywords} → {premiumKeywords}\n' +
+      '• Daily digest — premium only\n\n' +
+      '⭐ /subscribe pays with Telegram Stars, without leaving Telegram. Nothing you set up is ever thrown ' +
+      'away: if a subscription lapses, the extras stay saved and simply wait for you to renew.\n\n' +
+      '*Your data and settings*\n' +
+      '🔒 /privacy — what I store, who sees it, how long I keep it\n' +
+      '🗑 /forgetme — delete your messages and settings for good\n' +
+      '🌐 /language — English or Русский\n\n' +
+      'Lost? /start brings the menu back.',
   },
 
   onboarding: {
@@ -49,7 +105,8 @@ module.exports = {
       'Admins can remove me to stop collection entirely.\n\n' +
       '⚠️ For me to see all messages (not just replies/mentions), whoever owns this bot must ' +
       'disable privacy mode via @BotFather → /setprivacy → Disable.\n\n' +
-      'Then use /summary here anytime, or message me privately to pick this chat from your list.',
+      'Then use /summary here anytime, or message me privately to pick this chat from your list.\n' +
+      '/help explains everything I can do.',
   },
 
   summary: {

@@ -10,6 +10,7 @@ function mainMenu(lang) {
     [t(lang, 'menu.filters'), t(lang, 'menu.digest')],
     [t(lang, 'menu.channels'), t(lang, 'menu.subscribe')],
     [t(lang, 'menu.language'), t(lang, 'menu.privacy')],
+    [t(lang, 'menu.help')],
   ]).resize();
 }
 

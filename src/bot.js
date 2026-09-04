@@ -13,7 +13,7 @@ const { startWorker } = require('./services/queue');
 const { startScheduler } = require('./services/scheduler');
 const { getOrCreateChat, linkUserToChat, deactivateChat } = require('./services/database');
 const { isGroupChat } = require('./utils/formatters');
-const { t, DEFAULT_LANGUAGE } = require('./utils/i18n');
+const { t, DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, PUBLIC_COMMANDS } = require('./utils/i18n');
 const { startHeartbeat } = require('./utils/heartbeat');
 
 const heartbeatPath = path.join(path.dirname(config.database.path), 'heartbeat');
@@ -38,7 +38,7 @@ bot.catch((err, ctx) => {
 });
 
 function registerCommands(instance) {
-  ['start', 'summary', 'find', 'filter', 'channel', 'subscribe', 'digest', 'stats', 'privacy', 'language'].forEach((name) => {
+  ['start', 'help', 'summary', 'find', 'filter', 'channel', 'subscribe', 'digest', 'stats', 'privacy', 'language'].forEach((name) => {
     require(`./commands/${name}`)(instance);
   });
 }
@@ -65,6 +65,26 @@ async function handleMyChatMemberUpdate(ctx) {
     );
   } else if (newStatus === 'left' || newStatus === 'kicked') {
     deactivateChat(chat.id);
+  }
+}
+
+/**
+ * Publish the command list Telegram shows in its "/" menu, in every language
+ * we support.
+ *
+ * Best effort on purpose: this costs discoverability, not function, so a
+ * Telegram hiccup here must never keep the bot from launching.
+ */
+async function publishCommandMenu() {
+  for (const lang of SUPPORTED_LANGUAGES) {
+    const commands = PUBLIC_COMMANDS.map((command) => ({
+      command,
+      description: t(lang, `commands.${command}`),
+    }));
+    // Telegram keys these by language_code, and falls back to the list
+    // published without one — so the default language is published bare.
+    const scope = lang === DEFAULT_LANGUAGE ? {} : { language_code: lang };
+    await bot.telegram.setMyCommands(commands, scope);
   }
 }
 
@@ -107,6 +127,15 @@ async function main() {
   // Ctrl+C / SIGTERM are never handled.
   process.once('SIGINT', shutdown('SIGINT'));
   process.once('SIGTERM', shutdown('SIGTERM'));
+
+  // Before launch rather than after: the menu is a plain API call that needs
+  // only the token, and doing it here keeps the failure out of the callback
+  // that starts the heartbeat.
+  try {
+    await publishCommandMenu();
+  } catch (error) {
+    logger.warn('Could not publish the command menu to Telegram', { error: error.message });
+  }
 
   await bot.launch({}, () => {
     logger.info(`Bot launched as @${bot.botInfo.username}`);
