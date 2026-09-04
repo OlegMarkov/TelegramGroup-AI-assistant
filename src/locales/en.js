@@ -134,6 +134,7 @@ module.exports = {
     prompt: 'Send: /find <search term>',
     noResults: 'No results found for "{query}".',
     header: '🔎 Results for "{query}":',
+    unknownAuthor: 'someone',
     noLinkedChats:
       'You are not linked to any group chats yet. Add me to a group to start searching its history.',
   },
