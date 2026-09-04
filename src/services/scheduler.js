@@ -105,7 +105,7 @@ async function runDueDigests({ sleep } = {}) {
       // digest stayed enabled, so the tick tried again the next day and every
       // day after — invisible noise that grows with every user who leaves.
       if (isBlockedError(error)) {
-        disableScheduledDigest(entry.chat_id, entry.user_id);
+        disableScheduledDigest(entry.chat_id, entry.user_id, 'blocked');
         track(EVENTS.DIGEST_DISABLED_BLOCKED, { userId: entry.user_id, chatId: entry.chat_id });
         logger.info('Disabled a scheduled digest because the user blocked the bot', {
           chatId: entry.chat_id,

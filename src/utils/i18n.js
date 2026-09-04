@@ -86,6 +86,7 @@ const PUBLIC_COMMANDS = [
   'channels',
   'digest',
   'subscribe',
+  'status',
   'language',
   'privacy',
   'forgetme',

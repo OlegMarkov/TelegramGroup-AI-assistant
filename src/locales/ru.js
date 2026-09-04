@@ -26,6 +26,7 @@ module.exports = {
     channels: 'Публичные каналы, на которые вы подписаны',
     digest: 'Ежедневный дайджест в личные сообщения (премиум)',
     subscribe: 'Премиум за Telegram Stars',
+    status: 'Ваш тариф, использование и лимиты',
     language: 'Сменить язык / switch language',
     privacy: 'Что я храню и как долго',
     forgetme: 'Удалить все мои данные',
@@ -90,6 +91,7 @@ module.exports = {
       '⭐ /subscribe — оплата через Telegram Stars, не выходя из Telegram. Ничего из настроенного не ' +
       'пропадает: если подписка закончится, лишнее останется сохранённым и дождётся продления.\n\n' +
       '*Ваши данные и настройки*\n' +
+      '📊 /status — ваш тариф, что израсходовано и что заблокировано\n' +
       '🔒 /privacy — что я храню, кто это видит и как долго\n' +
       '🗑 /forgetme — навсегда удалить свои сообщения и настройки\n' +
       '🌐 /language — English или Русский\n\n' +
@@ -280,6 +282,29 @@ module.exports = {
     choose: '🌐 Выберите язык:',
     changed: '✅ Язык переключён на русский.',
     current: 'Текущий: {language}',
+  },
+
+  status: {
+    header: '📊 *Ваш статус*',
+    planFree: '*Тариф*: Бесплатный',
+    planPremium: '*Тариф*: {plan} — до {expires}',
+    planPremiumNoExpiry: '*Тариф*: {plan}',
+    summaries: '📝 Сводок сегодня: {used} из {limit}',
+    lookback: '⏳ Глубина: до {hours} ч.',
+    unlimited: 'без ограничений',
+    trackingHeader: '*За чем я слежу*',
+    groups: '💬 Группы: {allowed} из {limit}{locked}',
+    channels: '📢 Каналы: {allowed} из {limit}{locked}',
+    keywords: '🎯 Ключевые слова: {allowed} из {limit}{locked}',
+    lockedSuffix: ' — 🔒 {count} сохранено, но не активно',
+    digestHeader: '*Ежедневный дайджест*',
+    digestNone: '🔕 Не настроен — /digest, чтобы включить',
+    digestOn: '🔔 *{chat}* в {time}',
+    digestOff: '🔕 *{chat}* — выключен',
+    digestBlocked: '🔕 *{chat}* — выключен, потому что вы меня заблокировали. /digest включит снова',
+    upsell: '⭐ Вы на границе бесплатного тарифа. /subscribe снимает все ограничения выше.',
+    subscribeButton: '⭐ Подключить премиум',
+    dmOnly: 'Отправьте /status в личном чате — там ваш тариф и использование.',
   },
 
   privacy: {

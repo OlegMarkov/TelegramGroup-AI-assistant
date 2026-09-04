@@ -26,6 +26,7 @@ module.exports = {
     channels: 'Public channels you follow',
     digest: 'Daily digest by DM (premium)',
     subscribe: 'Go premium with Telegram Stars',
+    status: 'Your plan, usage and limits',
     language: 'Switch language / сменить язык',
     privacy: 'What I store and for how long',
     forgetme: 'Delete all my data',
@@ -89,6 +90,7 @@ module.exports = {
       '⭐ /subscribe pays with Telegram Stars, without leaving Telegram. Nothing you set up is ever thrown ' +
       'away: if a subscription lapses, the extras stay saved and simply wait for you to renew.\n\n' +
       '*Your data and settings*\n' +
+      '📊 /status — your plan, what you have used, and what is locked\n' +
       '🔒 /privacy — what I store, who sees it, how long I keep it\n' +
       '🗑 /forgetme — delete your messages and settings for good\n' +
       '🌐 /language — English or Русский\n\n' +
@@ -283,6 +285,31 @@ module.exports = {
     choose: '🌐 Choose your language:',
     changed: '✅ Language set to English.',
     current: 'Current: {language}',
+  },
+
+  status: {
+    header: '📊 *Where you stand*',
+    planFree: '*Plan*: Free',
+    planPremium: '*Plan*: {plan} — until {expires}',
+    planPremiumNoExpiry: '*Plan*: {plan}',
+    summaries: '📝 Summaries today: {used} of {limit}',
+    lookback: '⏳ Lookback: up to {hours}h',
+    unlimited: 'unlimited',
+    trackingHeader: '*What you are tracking*',
+    groups: '💬 Groups: {allowed} of {limit}{locked}',
+    channels: '📢 Channels: {allowed} of {limit}{locked}',
+    keywords: '🎯 Keywords: {allowed} of {limit}{locked}',
+    lockedSuffix: ' — 🔒 {count} kept but not active',
+    digestHeader: '*Daily digest*',
+    digestNone: '🔕 Not set up — /digest to schedule one',
+    digestOn: '🔔 *{chat}* at {time}',
+    digestOff: '🔕 *{chat}* — off',
+    // A digest the bot switched off itself. Without saying so, someone who
+    // blocked and later unblocked the bot has no way to know why it stopped.
+    digestBlocked: '🔕 *{chat}* — off, because you blocked me. /digest turns it back on',
+    upsell: '⭐ You are at the edge of the free plan. /subscribe lifts every limit above.',
+    subscribeButton: '⭐ Go premium',
+    dmOnly: 'Send me /status in a private chat — it shows your own plan and usage.',
   },
 
   privacy: {

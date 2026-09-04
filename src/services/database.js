@@ -152,6 +152,11 @@ addColumnIfMissing('users', 'language', 'TEXT');
 addColumnIfMissing('chats', 'source', `TEXT NOT NULL DEFAULT 'bot'`);
 addColumnIfMissing('chats', 'username', 'TEXT');
 
+// Why a digest is off, when it is off. Without it, "disabled" covers both the
+// user switching it off and the bot switching it off because they blocked it,
+// and /status can only describe one of those honestly.
+addColumnIfMissing('scheduled_digests', 'disabled_reason', 'TEXT');
+
 // One row per channel, no matter how many users follow it. Handles are stored
 // lowercased so @Durov and @durov cannot become two chats holding two copies
 // of the same content.
@@ -559,12 +564,36 @@ function setScheduledDigest({ chatId, userId, hourUtc }) {
   db.prepare(
     `INSERT INTO scheduled_digests (chat_id, user_id, hour_utc, enabled)
      VALUES (?, ?, ?, 1)
-     ON CONFLICT(chat_id, user_id) DO UPDATE SET hour_utc = excluded.hour_utc, enabled = 1`
+     ON CONFLICT(chat_id, user_id) DO UPDATE SET hour_utc = excluded.hour_utc, enabled = 1, disabled_reason = NULL`
   ).run(chatId, userId, hourUtc);
 }
 
-function disableScheduledDigest(chatId, userId) {
-  db.prepare('UPDATE scheduled_digests SET enabled = 0 WHERE chat_id = ? AND user_id = ?').run(chatId, userId);
+/**
+ * Switches a scheduled digest off.
+ *
+ * `reason` is recorded so /status can distinguish "you turned this off" from
+ * "I turned this off because you blocked me", which otherwise look identical
+ * to the person wondering where their digest went.
+ */
+function disableScheduledDigest(chatId, userId, reason = null) {
+  db.prepare('UPDATE scheduled_digests SET enabled = 0, disabled_reason = ? WHERE chat_id = ? AND user_id = ?').run(
+    reason,
+    chatId,
+    userId
+  );
+}
+
+/** Every scheduled digest a user has, for /status. */
+function getUserScheduledDigests(userId) {
+  return db
+    .prepare(
+      `SELECT sd.chat_id, sd.hour_utc, sd.enabled, sd.disabled_reason, c.title AS chat_title
+       FROM scheduled_digests sd
+       JOIN chats c ON c.id = sd.chat_id
+       WHERE sd.user_id = ? AND c.is_active = 1
+       ORDER BY c.title`
+    )
+    .all(userId);
 }
 
 /**
@@ -918,6 +947,7 @@ module.exports = {
   setScheduledDigest,
   disableScheduledDigest,
   getDueScheduledDigests,
+  getUserScheduledDigests,
   markDigestSent,
   getCachedDigestSummary,
   setCachedDigestSummary,

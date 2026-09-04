@@ -48,3 +48,7 @@ module.exports = (bot) => {
   bot.hears(allTranslations('menu.subscribe'), subscribeHandler);
   bot.action(/^subscribe:(.+)$/, planSelected);
 };
+
+// Exported so the Subscribe button on /status opens the same flow, guards and
+// all, instead of a second copy of it that can drift.
+module.exports.subscribeHandler = subscribeHandler;
