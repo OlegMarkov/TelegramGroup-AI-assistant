@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const { getUserFilters, setUserFilters } = require('../services/database');
-const { filterSchema, MAX_KEYWORDS, MAX_KEYWORD_LENGTH } = require('../models/filter');
+const { filterSchema, allowedKeywords, MAX_KEYWORD_LENGTH } = require('../models/filter');
+const { getLimits, PREMIUM_LIMITS } = require('../models/subscription');
 const { normalize } = require('../services/filterMatcher');
 const { filterCategoriesMenu, filterKeywordsMenu } = require('../keyboards');
 const { t, allTranslations } = require('../utils/i18n');
@@ -57,6 +58,16 @@ function isPrivate(ctx) {
   return Boolean(ctx.chat) && ctx.chat.type === 'private';
 }
 
+/**
+ * The keyword list as one line, with the ones the plan does not match on
+ * marked — the same convention the channel list uses, so a locked thing looks
+ * locked wherever it is shown rather than only on the screen that owns it.
+ */
+function keywordsSummary(ctx, keywords) {
+  const live = new Set(allowedKeywords(keywords, getLimits(ctx.state.subscription).maxKeywords));
+  return keywords.map((word) => (live.has(word) ? word : `🔒 ${word}`)).join(', ');
+}
+
 function categoriesView(ctx) {
   const lang = ctx.state.lang;
   const { categories, keywords } = getUserFilters(ctx.from.id);
@@ -65,7 +76,9 @@ function categoriesView(ctx) {
   // there — otherwise the only way to remember is to go and look.
   const text =
     keywords.length > 0 && isPrivate(ctx)
-      ? `${t(lang, 'filter.choose')}\n\n${t(lang, 'filter.keywordsLine', { keywords: keywords.join(', ') })}`
+      ? `${t(lang, 'filter.choose')}\n\n${t(lang, 'filter.keywordsLine', {
+          keywords: keywordsSummary(ctx, keywords),
+        })}`
       : t(lang, 'filter.choose');
 
   return { text, keyboard: filterCategoriesMenu(lang, categories, isPrivate(ctx) ? keywords.length : 0) };
@@ -73,21 +86,56 @@ function categoriesView(ctx) {
 
 function keywordsView(ctx) {
   const lang = ctx.state.lang;
+  const limits = getLimits(ctx.state.subscription);
   const { keywords } = getUserFilters(ctx.from.id);
   const entries = withIds(keywords);
+  const live = allowedKeywords(keywords, limits.maxKeywords);
+  const liveIds = new Set(live.map(keywordId));
 
   // A keyword removed since the keyboard was drawn must not stay ticked, or
   // the count on the Remove button promises more than it can deliver.
-  const live = new Set(entries.map((e) => e.id));
-  const selectedIds = new Set([...keywordSelection.get(ctx.from.id)].filter((id) => live.has(id)));
+  const known = new Set(entries.map((e) => e.id));
+  const selectedIds = new Set([...keywordSelection.get(ctx.from.id)].filter((id) => known.has(id)));
   keywordSelection.set(ctx.from.id, selectedIds);
 
-  const text =
+  let text =
     entries.length === 0
       ? t(lang, 'filter.keywordsEmpty')
       : `${t(lang, 'filter.keywordsHeader')}\n\n${t(lang, 'filter.keywordsHint')}`;
 
-  return { text, keyboard: filterKeywordsMenu(lang, { keywords: entries, selectedIds }) };
+  // A lapsed subscriber can be following more keywords than their plan now
+  // matches on. Saying so beats letting them wonder why a word they can see
+  // never lights up.
+  if (live.length < keywords.length) {
+    text += `\n\n${t(lang, 'filter.keywordsSomeLocked', {
+      allowed: live.length,
+      total: keywords.length,
+      premiumMax: PREMIUM_LIMITS.maxKeywords,
+    })}`;
+  }
+
+  return { text, keyboard: filterKeywordsMenu(lang, { keywords: entries, selectedIds, liveIds }) };
+}
+
+/**
+ * Hitting the free allowance is an upsell; hitting the premium ceiling is
+ * housekeeping. Same condition, entirely different thing to say.
+ */
+function keywordLimitReply(ctx) {
+  const lang = ctx.state.lang;
+  const limits = getLimits(ctx.state.subscription);
+  const isPremium = Boolean(ctx.state.subscription);
+
+  track(isPremium ? EVENTS.FILTER_BLOCKED_LIMIT : EVENTS.FILTER_BLOCKED_PREMIUM, { userId: ctx.from.id });
+
+  return ctx.reply(
+    isPremium
+      ? t(lang, 'filter.keywordsAtLimit', { max: limits.maxKeywords })
+      : t(lang, 'filter.keywordsFreeLimit', {
+          max: limits.maxKeywords,
+          premiumMax: PREMIUM_LIMITS.maxKeywords,
+        })
+  );
 }
 
 /**
@@ -145,7 +193,7 @@ async function doneFiltering(ctx) {
     lines.push(t(lang, 'filter.following', { categories: labels }));
   }
   if (keywords.length > 0 && isPrivate(ctx)) {
-    lines.push(t(lang, 'filter.keywordsLine', { keywords: keywords.join(', ') }));
+    lines.push(t(lang, 'filter.keywordsLine', { keywords: keywordsSummary(ctx, keywords) }));
   }
   return ctx.reply(lines.join('\n'));
 }
@@ -222,8 +270,9 @@ async function removeKeywords(ctx) {
 
 function promptForKeywords(ctx) {
   const lang = ctx.state.lang;
+  const limits = getLimits(ctx.state.subscription);
   armPrompt(ctx.from.id, KEYWORD_PROMPT);
-  return ctx.reply(t(lang, 'filter.keywordsAddPrompt', { max: MAX_KEYWORDS }), {
+  return ctx.reply(t(lang, 'filter.keywordsAddPrompt', { max: limits.maxKeywords }), {
     reply_markup: {
       inline_keyboard: [[{ text: t(lang, 'common.cancel'), callback_data: 'filter:kw:addcancel' }]],
     },
@@ -234,12 +283,12 @@ async function addKeywordsCallback(ctx) {
   // Also the point where capturing the next message stops making sense: in a
   // group that message is somebody talking.
   if (!(await requirePrivate(ctx))) return undefined;
-  const lang = ctx.state.lang;
+  const limits = getLimits(ctx.state.subscription);
   await ctx.answerCbQuery();
 
-  const { keywords } = getUserFilters(ctx.from.id);
-  if (keywords.length >= MAX_KEYWORDS) {
-    return ctx.reply(t(lang, 'filter.keywordsAtLimit', { max: MAX_KEYWORDS }));
+  // Said here rather than after they have typed a word we would only refuse.
+  if (getUserFilters(ctx.from.id).keywords.length >= limits.maxKeywords) {
+    return keywordLimitReply(ctx);
   }
 
   return promptForKeywords(ctx);
@@ -274,7 +323,7 @@ function parseKeywords(input) {
  * Sorts an answer into what was taken and what was not, so the reply can say
  * exactly which words landed rather than silently dropping some of them.
  */
-function classifyKeywords(existing, candidates) {
+function classifyKeywords(existing, candidates, maxKeywords) {
   const seen = new Set(existing.map(normalize));
   const added = [];
   const duplicate = [];
@@ -288,7 +337,7 @@ function classifyKeywords(existing, candidates) {
       // Case and ё/е are the matcher's idea of the same word, so they have to
       // be this list's idea of a duplicate too.
       duplicate.push(word);
-    } else if (existing.length + added.length >= MAX_KEYWORDS) {
+    } else if (existing.length + added.length >= maxKeywords) {
       overflow.push(word);
     } else {
       seen.add(normalize(word));
@@ -301,6 +350,8 @@ function classifyKeywords(existing, candidates) {
 
 async function handleKeywordAnswer(ctx, text) {
   const lang = ctx.state.lang;
+  const limits = getLimits(ctx.state.subscription);
+  const isPremium = Boolean(ctx.state.subscription);
   const filters = getUserFilters(ctx.from.id);
   const candidates = parseKeywords(text);
 
@@ -310,7 +361,11 @@ async function handleKeywordAnswer(ctx, text) {
     return ctx.reply(t(lang, 'filter.keywordsNothingUseful'));
   }
 
-  const { added, duplicate, tooLong, overflow } = classifyKeywords(filters.keywords, candidates);
+  const { added, duplicate, tooLong, overflow } = classifyKeywords(
+    filters.keywords,
+    candidates,
+    limits.maxKeywords
+  );
 
   if (added.length > 0) {
     save(ctx, { ...filters, keywords: [...filters.keywords, ...added] });
@@ -326,7 +381,18 @@ async function handleKeywordAnswer(ctx, text) {
     lines.push(t(lang, 'filter.keywordsTooLong', { max: MAX_KEYWORD_LENGTH, keywords: tooLong.join(', ') }));
   }
   if (overflow.length > 0) {
-    lines.push(t(lang, 'filter.keywordsFull', { max: MAX_KEYWORDS, keywords: overflow.join(', ') }));
+    // The wall a free user just hit is the one worth counting, and it reads
+    // differently from a paying user filling their twenty.
+    track(isPremium ? EVENTS.FILTER_BLOCKED_LIMIT : EVENTS.FILTER_BLOCKED_PREMIUM, { userId: ctx.from.id });
+    lines.push(
+      isPremium
+        ? t(lang, 'filter.keywordsFull', { max: limits.maxKeywords, keywords: overflow.join(', ') })
+        : t(lang, 'filter.keywordsFullFree', {
+            max: limits.maxKeywords,
+            premiumMax: PREMIUM_LIMITS.maxKeywords,
+            keywords: overflow.join(', '),
+          })
+    );
   }
 
   await ctx.reply(lines.join('\n'));

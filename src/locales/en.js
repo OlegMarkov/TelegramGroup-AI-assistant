@@ -28,7 +28,8 @@ module.exports = {
       'Add me to a group to get started, then:\n' +
       '📝 /summary [hours] — AI summary of recent activity (free: {freeSummaries}/day, up to {freeHours}h)\n' +
       "🔎 /find <query> — search that group's message history\n" +
-      '🎯 /filter — pick keywords/topics to get highlighted in summaries\n' +
+      '🎯 /filter — topics and your own keywords, highlighted in summaries ' +
+      '(free: {freeKeywords} keyword, premium: {premiumKeywords})\n' +
       '📢 /channels — summarize public channels (free: {freeChannels}, premium: {premiumChannels})\n' +
       '📅 /digest — premium: automatic daily digest sent to your DM\n' +
       '⭐ /subscribe — unlimited summaries, longer lookback, and daily digests\n' +
@@ -112,7 +113,20 @@ module.exports = {
     keywordsDuplicate: 'Already following: {keywords}',
     keywordsTooLong: 'Skipped, over {max} characters: {keywords}',
     keywordsFull: "You can follow up to {max} keywords, so these didn't fit: {keywords}",
+    keywordsFullFree:
+      "⭐ The free plan includes {max} keyword, so these didn't fit: {keywords}\n\n" +
+      '/subscribe to follow up to {premiumMax}.',
     keywordsAtLimit: "You're already following {max} keywords. Remove one to make room.",
+    keywordsFreeLimit:
+      '⭐ The free plan includes {max} keyword.\n\n' +
+      'You already have one. /subscribe to follow up to {premiumMax}, ' +
+      'or swap it for another below.',
+    // Phrased with the plan as the subject on purpose: "only the first
+    // {allowed} of your {total} keywords are matched" reads as "the first 1 …
+    // are" for every free user, which is the common case.
+    keywordsSomeLocked:
+      '⭐ The free plan matches {allowed} of your {total} keywords. ' +
+      'The rest are kept — /subscribe to use all {premiumMax} again.',
     keywordsGroupHint:
       'Your keywords are yours alone — open /filter in a private chat with me to see or change them.',
     keywordsRemoved: '✅ Removed: {keywords}',
@@ -137,7 +151,7 @@ module.exports = {
       '⭐ On the free plan you can summarize your first {max} channel.\n\n' +
       '/subscribe to use all {premiumMax} of yours again.',
     someLocked:
-      '⭐ Only the first {allowed} of your {total} channels work on the free plan. ' +
+      '⭐ The free plan covers {allowed} of your {total} channels. ' +
       'The rest are kept — /subscribe to use all {premiumMax} again.',
     usage: 'Usage: `/addchannel @channelname`',
     invalidHandle:

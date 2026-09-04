@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { MAX_KEYWORDS } = require('./filter');
 
 /**
  * PRICING — set 2026-08-07: monthly 300, yearly 3000 (was 150 / 1200).
@@ -50,12 +51,17 @@ const SUBSCRIPTION_PLANS = {
 // Because free is no longer zero, "maxChannels === 0" is not a premium test.
 // Access is decided per channel by isChannelWithinLimit, the same way groups
 // work, so a lapsed subscriber keeps their first channel instead of all 20.
+// Keywords follow the same shape for the same reason: one is enough to see
+// your own name light up in a summary and want the rest, which is a better
+// pitch than a screen you cannot use. Unlike channels they cost nothing to
+// match, so the premium ceiling is only the storage cap from the schema.
 const FREE_LIMITS = {
   maxSummariesPerDay: 3,
   maxLookbackHours: 24,
   scheduledDigests: false,
   maxGroups: 1,
   maxChannels: 1,
+  maxKeywords: 1,
 };
 
 const PREMIUM_LIMITS = {
@@ -64,6 +70,7 @@ const PREMIUM_LIMITS = {
   scheduledDigests: true,
   maxGroups: Infinity,
   maxChannels: 20,
+  maxKeywords: MAX_KEYWORDS,
 };
 
 function getLimits(subscription) {

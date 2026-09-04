@@ -65,10 +65,15 @@ function filterCategoriesMenu(lang, selectedCategories = [], keywordCount = 0) {
  * the keyword itself — callback_data is capped at 64 bytes, which a 50-character
  * Cyrillic keyword blows straight past.
  */
-function filterKeywordsMenu(lang, { keywords, selectedIds = new Set() }) {
-  const rows = keywords.map(({ id, word }) => [
-    Markup.button.callback(`${selectedIds.has(id) ? '☑️' : '▫️'} ${truncate(word, 40)}`, `filter:kw:${id}`),
-  ]);
+function filterKeywordsMenu(lang, { keywords, selectedIds = new Set(), liveIds = null }) {
+  const rows = keywords.map(({ id, word }) => {
+    const mark = selectedIds.has(id) ? '☑️' : '▫️';
+    // Keywords past the plan's allowance stay in the list — they are still
+    // saved, just not matched — so they have to look different, and they stay
+    // tappable, since removing one is how you get back under the allowance.
+    const lock = liveIds && !liveIds.has(id) ? '🔒 ' : '';
+    return [Markup.button.callback(`${mark} ${lock}${truncate(word, 40)}`, `filter:kw:${id}`)];
+  });
 
   const actions = [Markup.button.callback(t(lang, 'filter.keywordsAddButton'), 'filter:kw:add')];
   if (selectedIds.size > 0) {

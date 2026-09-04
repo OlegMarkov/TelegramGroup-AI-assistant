@@ -12,7 +12,8 @@ process.env.NODE_ENV = 'test';
 
 const db = require('../src/services/database');
 const { buildFilterMatcher } = require('../src/services/filterMatcher');
-const { MAX_KEYWORDS, MAX_KEYWORD_LENGTH } = require('../src/models/filter');
+const { allowedKeywords, MAX_KEYWORDS, MAX_KEYWORD_LENGTH } = require('../src/models/filter');
+const { FREE_LIMITS, PREMIUM_LIMITS } = require('../src/models/subscription');
 const registerFilter = require('../src/commands/filter');
 
 const handlers = { commands: {}, actions: [], text: null };
@@ -30,7 +31,9 @@ const fakeBot = {
 };
 registerFilter(fakeBot);
 
-function makeCtx({ from, text, chatType }) {
+const PREMIUM = { plan: 'monthly', status: 'active' };
+
+function makeCtx({ from, text, chatType, subscription }) {
   const replies = [];
   const edits = [];
   const markups = [];
@@ -40,7 +43,7 @@ function makeCtx({ from, text, chatType }) {
   return {
     chat: { id: from.id, type: chatType || 'private' },
     from,
-    state: { subscription: null, lang: 'en' },
+    state: { subscription: subscription || null, lang: 'en' },
     message: { text, message_id: 1, date: Math.floor(Date.now() / 1000) },
     replies,
     edits,
@@ -107,8 +110,8 @@ async function sendText(text, opts) {
 }
 
 /** Opens the keywords screen and returns the callback_data of one row. */
-async function keywordButton(user, matcher) {
-  const ctx = await fireCallback('filter:keywords', { from: user });
+async function keywordButton(user, matcher, subscription = PREMIUM) {
+  const ctx = await fireCallback('filter:keywords', { from: user, subscription });
   return callbackFor(ctx, matcher);
 }
 
@@ -129,14 +132,14 @@ test.after(() => {
 test('the topics screen offers a way into keywords, and says what is set there', async () => {
   const user = newUser(800, 'Topics');
 
-  const empty = await run('filter', { from: user, text: '/filter' });
+  const empty = await run('filter', { from: user, subscription: PREMIUM, text: '/filter' });
   assert.ok(
     buttons(empty).some((l) => /Add my own keywords/i.test(l)),
     'with none set, the button says what it is for rather than showing a zero'
   );
 
   db.setUserFilters(user.id, { keywords: ['deploy'], categories: [] });
-  const withOne = await run('filter', { from: user, text: '/filter' });
+  const withOne = await run('filter', { from: user, subscription: PREMIUM, text: '/filter' });
   assert.ok(buttons(withOne).some((l) => /My keywords \(1\)/.test(l)), 'once set it carries the count');
   assert.match(withOne.replies[0], /deploy/, 'and the topics screen names them, so they are not out of sight');
 });
@@ -144,8 +147,8 @@ test('the topics screen offers a way into keywords, and says what is set there',
 test('keywords are added from one message, one per line or comma separated', async () => {
   const user = newUser(801, 'Adder');
 
-  await fireCallback('filter:kw:add', { from: user });
-  const ctx = await sendText('deploy, release notes\nAnna', { from: user });
+  await fireCallback('filter:kw:add', { from: user, subscription: PREMIUM });
+  const ctx = await sendText('deploy, release notes\nAnna', { from: user, subscription: PREMIUM });
 
   assert.equal(ctx.passedThrough, false, 'the answer was consumed, not passed on');
   assert.deepEqual(db.getUserFilters(user.id).keywords, ['deploy', 'release notes', 'Anna']);
@@ -163,8 +166,8 @@ test('a multi-word keyword is kept whole, because the matcher handles phrases', 
 test('a keyword follows the word into its other endings', async () => {
   // The whole reason keywords are stems: nobody is going to type every ending.
   const user = newUser(802, 'Stemmer');
-  await fireCallback('filter:kw:add', { from: user });
-  await sendText('релиз', { from: user });
+  await fireCallback('filter:kw:add', { from: user, subscription: PREMIUM });
+  await sendText('релиз', { from: user, subscription: PREMIUM });
 
   const matches = buildFilterMatcher(db.getUserFilters(user.id));
   assert.equal(matches('обсудим релизы завтра'), true);
@@ -177,8 +180,8 @@ test('the same word twice is reported, not stored twice', async () => {
   const user = newUser(803, 'Duper');
   db.setUserFilters(user.id, { keywords: ['учёные'], categories: [] });
 
-  await fireCallback('filter:kw:add', { from: user });
-  const ctx = await sendText('Ученые, deploy', { from: user });
+  await fireCallback('filter:kw:add', { from: user, subscription: PREMIUM });
+  const ctx = await sendText('Ученые, deploy', { from: user, subscription: PREMIUM });
 
   assert.deepEqual(db.getUserFilters(user.id).keywords, ['учёные', 'deploy']);
   assert.match(ctx.replies[0], /Already following: Ученые/);
@@ -188,8 +191,8 @@ test('an over-long word is skipped and named, and the rest still land', async ()
   const user = newUser(804, 'Verbose');
   const tooLong = 'x'.repeat(MAX_KEYWORD_LENGTH + 1);
 
-  await fireCallback('filter:kw:add', { from: user });
-  const ctx = await sendText(`${tooLong}, deploy`, { from: user });
+  await fireCallback('filter:kw:add', { from: user, subscription: PREMIUM });
+  const ctx = await sendText(`${tooLong}, deploy`, { from: user, subscription: PREMIUM });
 
   assert.deepEqual(db.getUserFilters(user.id).keywords, ['deploy'], 'the good one is kept');
   assert.match(ctx.replies[0], new RegExp(`over ${MAX_KEYWORD_LENGTH} characters`));
@@ -200,8 +203,8 @@ test('the cap holds, and what did not fit is named rather than dropped silently'
   const existing = Array.from({ length: MAX_KEYWORDS - 1 }, (_, i) => `word_${i}`);
   db.setUserFilters(user.id, { keywords: existing, categories: [] });
 
-  await fireCallback('filter:kw:add', { from: user });
-  const ctx = await sendText('fits, overflows', { from: user });
+  await fireCallback('filter:kw:add', { from: user, subscription: PREMIUM });
+  const ctx = await sendText('fits, overflows', { from: user, subscription: PREMIUM });
 
   const stored = db.getUserFilters(user.id).keywords;
   assert.equal(stored.length, MAX_KEYWORDS);
@@ -210,22 +213,22 @@ test('the cap holds, and what did not fit is named rather than dropped silently'
   assert.match(ctx.replies[0], /didn't fit: overflows/);
 
   // And at the ceiling the button says so instead of asking for words it would refuse.
-  const atLimit = await fireCallback('filter:kw:add', { from: user });
+  const atLimit = await fireCallback('filter:kw:add', { from: user, subscription: PREMIUM });
   assert.match(atLimit.replies.join('\n'), /already following \d+ keywords/i);
-  const after = await sendText('nope', { from: user });
+  const after = await sendText('nope', { from: user, subscription: PREMIUM });
   assert.equal(after.passedThrough, true, 'the prompt was never armed');
 });
 
 test('an answer with no words in it keeps the prompt open', async () => {
   const user = newUser(806, 'Blank');
 
-  await fireCallback('filter:kw:add', { from: user });
-  const blank = await sendText(',,,', { from: user });
+  await fireCallback('filter:kw:add', { from: user, subscription: PREMIUM });
+  const blank = await sendText(',,,', { from: user, subscription: PREMIUM });
   assert.match(blank.replies[0], /couldn't find any words/i);
   assert.equal(db.getUserFilters(user.id).keywords.length, 0);
 
   // Still waiting: retyping is enough, no second trip through the button.
-  const retry = await sendText('deploy', { from: user });
+  const retry = await sendText('deploy', { from: user, subscription: PREMIUM });
   assert.equal(retry.passedThrough, false);
   assert.deepEqual(db.getUserFilters(user.id).keywords, ['deploy']);
 });
@@ -236,12 +239,12 @@ test('selecting keywords and pressing Remove drops exactly those', async () => {
 
   const alpha = await keywordButton(user, /alpha/);
   const gamma = await keywordButton(user, /gamma/);
-  await fireCallback(alpha, { from: user });
-  const ticked = await fireCallback(gamma, { from: user });
+  await fireCallback(alpha, { from: user, subscription: PREMIUM });
+  const ticked = await fireCallback(gamma, { from: user, subscription: PREMIUM });
 
   assert.ok(buttons(ticked).some((l) => /Remove \(2\)/.test(l)), 'the button counts what is ticked');
 
-  const removed = await fireCallback('filter:kw:remove', { from: user });
+  const removed = await fireCallback('filter:kw:remove', { from: user, subscription: PREMIUM });
   assert.ok(removed.replies.some((r) => /Removed: alpha, gamma/.test(r)), 'both are named back');
   assert.deepEqual(db.getUserFilters(user.id).keywords, ['beta']);
 });
@@ -250,7 +253,7 @@ test('Remove with nothing ticked asks for a selection instead of clearing the li
   const user = newUser(808, 'Careful');
   db.setUserFilters(user.id, { keywords: ['alpha'], categories: [] });
 
-  const ctx = await fireCallback('filter:kw:remove', { from: user });
+  const ctx = await fireCallback('filter:kw:remove', { from: user, subscription: PREMIUM });
   assert.ok(ctx.replies.some((r) => /Tap a keyword/i.test(r)));
   assert.deepEqual(db.getUserFilters(user.id).keywords, ['alpha'], 'nothing was removed');
 });
@@ -265,7 +268,7 @@ test('a row id from a stale keyboard matches nothing and cannot remove the wrong
   const firstRow = await keywordButton(user, /first/);
   db.setUserFilters(user.id, { keywords: ['second'], categories: [] });
 
-  const ctx = await fireCallback(firstRow, { from: user });
+  const ctx = await fireCallback(firstRow, { from: user, subscription: PREMIUM });
   assert.ok(ctx.replies.some((r) => /isn't in your list any more/i.test(r)));
   assert.deepEqual(db.getUserFilters(user.id).keywords, ['second'], 'the survivor is untouched');
 });
@@ -274,15 +277,15 @@ test('keywords and topics are independent, and both survive the other being edit
   const user = newUser(810, 'Both');
   db.setUserFilters(user.id, { keywords: ['deploy'], categories: [] });
 
-  await fireCallback('filter:category:Tech', { from: user });
+  await fireCallback('filter:category:Tech', { from: user, subscription: PREMIUM });
   assert.deepEqual(db.getUserFilters(user.id).categories, ['Tech']);
   assert.deepEqual(db.getUserFilters(user.id).keywords, ['deploy'], 'toggling a topic keeps keywords');
 
-  await fireCallback('filter:kw:add', { from: user });
-  await sendText('anna', { from: user });
+  await fireCallback('filter:kw:add', { from: user, subscription: PREMIUM });
+  await sendText('anna', { from: user, subscription: PREMIUM });
   assert.deepEqual(db.getUserFilters(user.id).categories, ['Tech'], 'adding a keyword keeps topics');
 
-  const done = await fireCallback('filter:done', { from: user });
+  const done = await fireCallback('filter:done', { from: user, subscription: PREMIUM });
   const summary = done.replies.join('\n');
   assert.match(summary, /Topics: Tech/);
   assert.match(summary, /Keywords: deploy, anna/);
@@ -297,11 +300,11 @@ test('Done on an empty filter set says everything comes through', async () => {
 test('commands and menu buttons are never swallowed by a pending keyword prompt', async () => {
   const user = newUser(812, 'Escapee');
 
-  await fireCallback('filter:kw:add', { from: user });
-  const menuTap = await sendText('⭐ Subscribe', { from: user });
+  await fireCallback('filter:kw:add', { from: user, subscription: PREMIUM });
+  const menuTap = await sendText('⭐ Subscribe', { from: user, subscription: PREMIUM });
   assert.equal(menuTap.passedThrough, true);
 
-  const command = await sendText('/summary', { from: user });
+  const command = await sendText('/summary', { from: user, subscription: PREMIUM });
   assert.equal(command.passedThrough, true);
   assert.equal(db.getUserFilters(user.id).keywords.length, 0, 'nothing was stored along the way');
 });
@@ -325,7 +328,7 @@ test('a keyword never reaches a group message, whoever taps the buttons', async 
   const secret = 'severance package';
   db.setUserFilters(user.id, { keywords: [secret], categories: ['Tech'] });
 
-  const inGroup = { from: user, chatType: 'supergroup' };
+  const inGroup = { from: user, chatType: 'supergroup', subscription: PREMIUM };
   const everythingSaid = (ctx) => [...ctx.replies, ...ctx.edits, ...buttons(ctx)].join('\n');
 
   const opened = await run('filter', { ...inGroup, text: '/filter' });
@@ -346,7 +349,7 @@ test('a keyword never reaches a group message, whoever taps the buttons', async 
   assert.ok(!everythingSaid(done).includes(secret), 'and not in the summary at the end');
 
   // In a DM the same user sees all of it.
-  const dm = await run('filter', { from: user, text: '/filter' });
+  const dm = await run('filter', { from: user, subscription: PREMIUM, text: '/filter' });
   assert.match(dm.replies[0], /severance package/);
 });
 
@@ -355,7 +358,7 @@ test('a stray keyword callback from a group cannot edit anything', async () => {
   db.setUserFilters(user.id, { keywords: ['alpha'], categories: [] });
   const row = await keywordButton(user, /alpha/);
 
-  const inGroup = { from: user, chatType: 'supergroup' };
+  const inGroup = { from: user, chatType: 'supergroup', subscription: PREMIUM };
   const toggled = await fireCallback(row, inGroup);
   assert.equal(toggled.edits.length, 0);
 
@@ -367,16 +370,133 @@ test('a stray keyword callback from a group cannot edit anything', async () => {
 test('cancelling the prompt, or walking back to topics, leaves the next message alone', async () => {
   const user = newUser(814, 'Canceller');
 
-  await fireCallback('filter:kw:add', { from: user });
-  const cancelled = await fireCallback('filter:kw:addcancel', { from: user });
+  await fireCallback('filter:kw:add', { from: user, subscription: PREMIUM });
+  const cancelled = await fireCallback('filter:kw:addcancel', { from: user, subscription: PREMIUM });
   assert.match(cancelled.edits[0], /Cancelled/i);
-  assert.equal((await sendText('@ignored', { from: user })).passedThrough, true);
+  assert.equal((await sendText('@ignored', { from: user, subscription: PREMIUM })).passedThrough, true);
 
   // Back does the same: leaving the screen abandons the question it asked.
-  await fireCallback('filter:kw:add', { from: user });
-  await fireCallback('filter:back', { from: user });
-  assert.equal((await sendText('also ignored', { from: user })).passedThrough, true);
+  await fireCallback('filter:kw:add', { from: user, subscription: PREMIUM });
+  await fireCallback('filter:back', { from: user, subscription: PREMIUM });
+  assert.equal((await sendText('also ignored', { from: user, subscription: PREMIUM })).passedThrough, true);
   assert.equal(db.getUserFilters(user.id).keywords.length, 0);
+});
+
+test('the free plan includes one keyword, and the second is an upsell', async () => {
+  // Free is one rather than zero for the same reason channels are: a feature
+  // you use and outgrow beats one you only ever meet as a paywall.
+  const user = newUser(820, 'Free');
+
+  await fireCallback('filter:kw:add', { from: user });
+  const first = await sendText('deploy', { from: user });
+  assert.deepEqual(db.getUserFilters(user.id).keywords, ['deploy'], 'the first one is free');
+  assert.match(first.replies[0], /Added: deploy/);
+
+  const blocked = await fireCallback('filter:kw:add', { from: user });
+  assert.match(blocked.replies.join('\n'), /free plan includes 1 keyword/i);
+  assert.match(blocked.replies.join('\n'), /subscribe/i);
+
+  // The prompt was never armed, so the next message stays an ordinary one.
+  const after = await sendText('another', { from: user });
+  assert.equal(after.passedThrough, true);
+  assert.deepEqual(db.getUserFilters(user.id).keywords, ['deploy']);
+});
+
+test('a free user sending several at once gets the first and an upsell for the rest', async () => {
+  const user = newUser(821, 'Eager');
+
+  await fireCallback('filter:kw:add', { from: user });
+  const ctx = await sendText('alpha, beta, gamma', { from: user });
+
+  assert.deepEqual(db.getUserFilters(user.id).keywords, ['alpha'], 'one lands');
+  const said = ctx.replies.join('\n');
+  assert.match(said, /Added: alpha/);
+  assert.match(said, /beta, gamma/, 'the rest are named, not dropped in silence');
+  assert.match(said, /subscribe/i);
+});
+
+test('hitting the keyword wall is counted as a paywall moment, not a generic limit', async () => {
+  // This is the number that says whether gating keywords was worth doing, so
+  // it has to land in the same funnel as the other free-plan walls.
+  const { EVENTS, getFunnelReport } = require('../src/services/analytics');
+  const user = newUser(822, 'Counted');
+  db.setUserFilters(user.id, { keywords: ['taken'], categories: [] });
+
+  const before = getFunnelReport(1).paywallHitUsers;
+  await fireCallback('filter:kw:add', { from: user });
+
+  const events = db.db
+    .prepare('SELECT event_type FROM events WHERE user_id = ?')
+    .all(user.id)
+    .map((r) => r.event_type);
+  assert.ok(events.includes(EVENTS.FILTER_BLOCKED_PREMIUM));
+  assert.equal(
+    getFunnelReport(1).paywallHitUsers,
+    before + 1,
+    'and it reaches the paywall -> purchase conversion rate, which is the point of gating it'
+  );
+
+  // A paying user filling their twenty is housekeeping, not a paywall.
+  const premium = newUser(823, 'Paying');
+  db.setUserFilters(premium.id, {
+    keywords: Array.from({ length: MAX_KEYWORDS }, (_, i) => `w${i}`),
+    categories: [],
+  });
+  const atCeiling = await fireCallback('filter:kw:add', { from: premium, subscription: PREMIUM });
+  const said = atCeiling.replies.join('\n');
+  assert.match(said, /already following 20 keywords/i);
+  assert.ok(!/subscribe/i.test(said), 'a paying user must not be asked to subscribe');
+});
+
+test('a lapsed subscriber keeps every keyword, and the first one still matches', async () => {
+  // Deleting the rest would be the one irreversible way to handle a lapse.
+  const user = newUser(824, 'Lapsed');
+  db.setUserFilters(user.id, { keywords: ['kept', 'locked'], categories: [] });
+
+  const stored = db.getUserFilters(user.id);
+  assert.equal(stored.keywords.length, 2, 'nothing was deleted');
+
+  const free = buildFilterMatcher({
+    ...stored,
+    keywords: allowedKeywords(stored.keywords, FREE_LIMITS.maxKeywords),
+  });
+  assert.equal(free('the kept one'), true, 'their earliest keyword still works');
+  assert.equal(free('the locked one'), false, 'the rest do not match until they resubscribe');
+
+  const premium = buildFilterMatcher({
+    ...stored,
+    keywords: allowedKeywords(stored.keywords, PREMIUM_LIMITS.maxKeywords),
+  });
+  assert.equal(premium('the locked one'), true, 'and come straight back when they do');
+});
+
+test('locked keywords are marked, explained, and can still be removed', async () => {
+  const user = newUser(825, 'Marked');
+  db.setUserFilters(user.id, { keywords: ['live', 'dormant'], categories: [] });
+
+  const screen = await fireCallback('filter:keywords', { from: user });
+  const locked = buttons(screen).filter((l) => l.includes('🔒'));
+  assert.equal(locked.length, 1, 'exactly the one past the free allowance');
+  assert.ok(locked[0].includes('dormant'));
+  assert.match(screen.edits[0], /free plan/i, 'and the screen says why');
+
+  // The way out of "you follow more than your plan matches" is removing one.
+  const row = await keywordButton(user, /dormant/, null);
+  await fireCallback(row, { from: user });
+  await fireCallback('filter:kw:remove', { from: user });
+  assert.deepEqual(db.getUserFilters(user.id).keywords, ['live']);
+});
+
+test('the topics screen marks a locked keyword too, so it never looks active', async () => {
+  const user = newUser(826, 'Consistent');
+  db.setUserFilters(user.id, { keywords: ['live', 'dormant'], categories: [] });
+
+  const free = await run('filter', { from: user, text: '/filter' });
+  assert.match(free.replies[0], /🔒 dormant/, 'the locked one is marked wherever it is listed');
+  assert.ok(!/🔒 live/.test(free.replies[0]), 'the live one is not');
+
+  const paid = await run('filter', { from: user, subscription: PREMIUM, text: '/filter' });
+  assert.ok(!paid.replies[0].includes('🔒'), 'and nothing is locked once they pay');
 });
 
 test('a keyword is highlighted in a digest the same way a category is', async () => {
@@ -384,8 +504,8 @@ test('a keyword is highlighted in a digest the same way a category is', async ()
   // that digest.js runs over every message in the window.
   const user = newUser(815, 'Endtoend');
 
-  await fireCallback('filter:kw:add', { from: user });
-  await sendText('квартальный отчёт', { from: user });
+  await fireCallback('filter:kw:add', { from: user, subscription: PREMIUM });
+  await sendText('квартальный отчёт', { from: user, subscription: PREMIUM });
 
   const matches = buildFilterMatcher(db.getUserFilters(user.id));
   assert.equal(matches('прислали квартальный отчет по продажам'), true, 'ё and е are the same word');

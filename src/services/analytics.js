@@ -24,6 +24,8 @@ const EVENTS = {
   CHANNEL_BLOCKED_LIMIT: 'channel_blocked_limit',
   FILTER_KEYWORDS_ADDED: 'filter_keywords_added',
   FILTER_KEYWORDS_REMOVED: 'filter_keywords_removed',
+  FILTER_BLOCKED_PREMIUM: 'filter_blocked_premium',
+  FILTER_BLOCKED_LIMIT: 'filter_blocked_limit',
   DIGEST_CONFIGURED: 'digest_configured',
   SCHEDULED_DIGEST_SENT: 'scheduled_digest_sent',
   SUBSCRIBE_VIEWED: 'subscribe_viewed',
@@ -39,6 +41,7 @@ const PAYWALL_EVENTS = [
   EVENTS.FIND_BLOCKED_GROUP_LIMIT,
   EVENTS.DIGEST_BLOCKED_PREMIUM,
   EVENTS.CHANNEL_BLOCKED_PREMIUM,
+  EVENTS.FILTER_BLOCKED_PREMIUM,
 ];
 
 // Analytics must never break the feature it's instrumenting — always swallow

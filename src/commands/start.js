@@ -18,6 +18,8 @@ module.exports = (bot) => {
         // greeting cannot quietly start advertising the wrong allowance.
         freeChannels: FREE_LIMITS.maxChannels,
         premiumChannels: PREMIUM_LIMITS.maxChannels,
+        freeKeywords: FREE_LIMITS.maxKeywords,
+        premiumKeywords: PREMIUM_LIMITS.maxKeywords,
       }),
       mainMenu(lang)
     );

@@ -1,12 +1,15 @@
 const {
   getRecentMessages,
   getUserFilters,
+  getActiveSubscription,
   getChatById,
   getCachedDigestSummary,
   setCachedDigestSummary,
 } = require('./database');
 const { summarize } = require('./deepseek');
 const { buildFilterMatcher } = require('./filterMatcher');
+const { allowedKeywords } = require('../models/filter');
+const { getLimits } = require('../models/subscription');
 const { fetchChannelPosts } = require('./channelSource');
 const { truncate, escapeMarkdown, normalizeModelMarkdown } = require('../utils/formatters');
 const { t, DEFAULT_LANGUAGE } = require('../utils/i18n');
@@ -93,7 +96,17 @@ async function generateDigest(chatId, userId, hours, lang = DEFAULT_LANGUAGE) {
 
   // Highlights depend on the requesting user's own filters, so they're
   // always computed fresh — only the DeepSeek call itself is cached.
-  const matchesFilters = buildFilterMatcher(getUserFilters(userId));
+  //
+  // The keyword allowance is applied here rather than at the /filter screen,
+  // because this is the single point where a stored filter turns into a match:
+  // a subscription that lapsed between adding a keyword and running a summary
+  // has to be noticed on the way out, not on the way in.
+  const filters = getUserFilters(userId);
+  const limits = getLimits(getActiveSubscription(userId));
+  const matchesFilters = buildFilterMatcher({
+    ...filters,
+    keywords: allowedKeywords(filters.keywords, limits.maxKeywords),
+  });
 
   let highlightBlock = '';
   if (matchesFilters) {
