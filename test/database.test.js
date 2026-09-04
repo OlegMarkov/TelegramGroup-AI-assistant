@@ -232,3 +232,53 @@ test('getRecentMessages returns the NEWEST messages in the window, not the oldes
   const times = recent.map((m) => m.created_at);
   assert.deepEqual(times, [...times].sort(), 'results must stay in chronological order');
 });
+
+test('a chat the bot was removed from does not spend a slot in the allowance', () => {
+  db.getOrCreateUser({ id: 14, username: 'n', firstName: 'N' });
+  db.getOrCreateChat({ id: -13, title: 'Dead', type: 'group' });
+  db.getOrCreateChat({ id: -14, title: 'Live', type: 'group' });
+
+  db.linkUserToChat(-13, 14);
+  db.db
+    .prepare('UPDATE chat_members SET joined_at = ? WHERE chat_id = ? AND user_id = ?')
+    .run('2020-01-01 00:00:00', -13, 14);
+  db.linkUserToChat(-14, 14);
+  db.db
+    .prepare('UPDATE chat_members SET joined_at = ? WHERE chat_id = ? AND user_id = ?')
+    .run('2020-01-02 00:00:00', -14, 14);
+
+  // While both are live the earliest one is the free user's single group.
+  assert.equal(db.isChatWithinFreeLimit(14, -13, 1), true);
+  assert.equal(db.isChatWithinFreeLimit(14, -14, 1), false);
+
+  db.deactivateChat(-13);
+
+  // The bug this guards: the dead chat kept its slot, so a free user was left
+  // with nothing they could query while still being shown the live group.
+  assert.equal(db.isChatWithinFreeLimit(14, -14, 1), true, 'the live group must inherit the slot');
+  assert.deepEqual(db.getAllowedUserChats(14, 1).map((c) => c.id), [-14]);
+  assert.equal(db.isChatWithinFreeLimit(14, -13, 1), false, 'a deactivated chat is never allowed');
+});
+
+test('a deactivated channel does not spend a slot in the channel allowance', () => {
+  db.getOrCreateUser({ id: 15, username: 'o', firstName: 'O' });
+  const dead = db.getOrCreateChannel({ username: 'deadchannel', title: 'Dead', addedBy: 15 });
+  const live = db.getOrCreateChannel({ username: 'livechannel', title: 'Live', addedBy: 15 });
+
+  db.linkUserToChat(dead.id, 15);
+  db.db
+    .prepare('UPDATE chat_members SET joined_at = ? WHERE chat_id = ? AND user_id = ?')
+    .run('2020-01-01 00:00:00', dead.id, 15);
+  db.linkUserToChat(live.id, 15);
+  db.db
+    .prepare('UPDATE chat_members SET joined_at = ? WHERE chat_id = ? AND user_id = ?')
+    .run('2020-01-02 00:00:00', live.id, 15);
+
+  assert.equal(db.isChannelWithinLimit(15, dead.id, 1), true);
+  assert.equal(db.isChannelWithinLimit(15, live.id, 1), false);
+
+  db.deactivateChat(dead.id);
+
+  assert.equal(db.isChannelWithinLimit(15, live.id, 1), true);
+  assert.deepEqual(db.getAllowedUserChannels(15, 1).map((c) => c.id), [live.id]);
+});

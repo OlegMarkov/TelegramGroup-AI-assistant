@@ -339,6 +339,12 @@ function getUserChats(userId) {
 // chat_id breaks ties because joined_at is stored to the second, so two
 // channels added in the same second would otherwise have no defined order and
 // a user could see a different one allowed on each request.
+//
+// Inactive chats are excluded from the ranking, not merely from the result. A
+// group the bot was removed from would otherwise still occupy a slot: a free
+// user whose earliest group went dead had their single allowance spent on it
+// and could summarize nothing at all, while still being shown the live group
+// they are a member of.
 function isWithinSourceLimit(userId, chatId, max, source) {
   if (!Number.isFinite(max)) return true;
   if (max <= 0) return false;
@@ -347,7 +353,7 @@ function isWithinSourceLimit(userId, chatId, max, source) {
       `SELECT 1 FROM (
          SELECT cm.chat_id FROM chat_members cm
          JOIN chats c ON c.id = cm.chat_id
-         WHERE cm.user_id = ? AND c.source = ?
+         WHERE cm.user_id = ? AND c.source = ? AND c.is_active = 1
          ORDER BY cm.joined_at ASC, cm.chat_id ASC LIMIT ?
        ) WHERE chat_id = ?`
     )
@@ -372,7 +378,7 @@ function getAllowedUserChannels(userId, maxChannels) {
        WHERE c.is_active = 1 AND c.source = 'channel' AND c.id IN (
          SELECT cm.chat_id FROM chat_members cm
          JOIN chats c2 ON c2.id = cm.chat_id
-         WHERE cm.user_id = ? AND c2.source = 'channel'
+         WHERE cm.user_id = ? AND c2.source = 'channel' AND c2.is_active = 1
          ORDER BY cm.joined_at ASC, cm.chat_id ASC LIMIT ?
        )
        ORDER BY c.title`
@@ -388,7 +394,7 @@ function getAllowedUserChats(userId, maxGroups) {
        WHERE c.is_active = 1 AND c.source = 'bot' AND c.id IN (
          SELECT cm.chat_id FROM chat_members cm
          JOIN chats c2 ON c2.id = cm.chat_id
-         WHERE cm.user_id = ? AND c2.source = 'bot'
+         WHERE cm.user_id = ? AND c2.source = 'bot' AND c2.is_active = 1
          ORDER BY cm.joined_at ASC, cm.chat_id ASC LIMIT ?
        )
        ORDER BY c.title`
