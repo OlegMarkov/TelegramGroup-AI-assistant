@@ -98,7 +98,7 @@ module.exports = {
     freeLimitReached:
       '⭐ *The free plan includes {max} channel.*\n\n' +
       'You are already following it. /subscribe to follow up to {premiumMax} channels, ' +
-      'or remove the current one with `/removechannel @name`.',
+      'or swap it out from /channels.',
     blockedLimit:
       '⭐ On the free plan you can summarize your first {max} channel.\n\n' +
       '/subscribe to use all {premiumMax} of yours again.',
@@ -106,10 +106,9 @@ module.exports = {
       '⭐ Only the first {allowed} of your {total} channels work on the free plan. ' +
       'The rest are kept — /subscribe to use all {premiumMax} again.',
     usage: 'Usage: `/addchannel @channelname`',
-    removeUsage: 'Usage: `/removechannel @channelname`',
     invalidHandle:
-      "That doesn't look like a channel username. Use the @name from the channel's profile, " +
-      'for example `/addchannel @durov`.',
+      "That doesn't look like a channel. Send its @name or its link — " +
+      'for example `@durov` or `https://t.me/durov`.',
     checking: 'Checking @{handle}…',
     unavailable:
       "I can't read *@{handle}*.\n\n" +
@@ -121,14 +120,24 @@ module.exports = {
       'Run /summary and pick it from the list, or set up a daily /digest for it.',
     alreadyAdded: "You're already following @{handle}.",
     limitReached:
-      "You're following the maximum of {max} channels. Remove one with `/removechannel @name` first.",
+      "You're following the maximum of {max} channels. Remove one from /channels first.",
     removed: '✅ Removed @{handle}.',
+    removedShort: 'Removed',
+    removedMany: '✅ Removed {handles}.',
     notFollowing: "You're not following @{handle}.",
     empty:
       "📢 You're not following any channels yet.\n\n" +
-      'Add one with `/addchannel @name` — any public channel works, for example `/addchannel @durov`.',
+      'Tap ➕ below to add one — any public channel works.',
     listHeader: '📢 *Channels you follow*',
-    listHint: 'Add with `/addchannel @name`, remove with `/removechannel @name`.',
+    listHint: 'Tap a channel to select it, then 🗑 to remove. ➕ adds a new one.',
+    addButton: '➕ Add channel',
+    removeButton: '🗑 Remove ({count})',
+    addPrompt:
+      '📢 Send me the channel — its @name or its link, whichever you have at hand.\n\n' +
+      'For example `@durov` or `https://t.me/durov`.',
+    addCancelled: 'Cancelled — nothing was added.',
+    nothingSelected: 'Tap a channel in the list first, then press Remove.',
+    gone: "You're not following that channel any more.",
   },
 
   digest: {

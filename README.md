@@ -8,7 +8,7 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 - `/summary [hours]` — AI-generated summary of a group's recent activity. Run inside a group to summarize it directly, or in DM to pick from your linked groups.
 - `/find <query>` — search a group's message history (or across all your linked groups, from DM)
 - `/filter` — pick keywords/topics that get highlighted as a separate "matches your filters" block in summaries
-- `/channels`, `/addchannel @name`, `/removechannel @name` — follow public Telegram channels and summarize them alongside your groups (1 on the free plan, 20 with premium)
+- `/channels` — follow public Telegram channels and summarize them alongside your groups (1 on the free plan, 20 with premium). The list is a keyboard: tap channels to select them, 🗑 removes the selection, ➕ asks for the next one by @name or link. `/addchannel` and `/removechannel` still take a handle directly.
 - `/digest` — premium: configure an automatic daily digest, delivered by DM at a chosen UTC hour
 - `/subscribe` — buy a premium plan with Telegram Stars (native `XTR` payments, no external provider needed)
 - `/language` — switch interface language (English / Русский)

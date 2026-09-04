@@ -41,7 +41,7 @@ const db = require('../src/services/database');
 const registerChannel = require('../src/commands/channel');
 const registerSummary = require('../src/commands/summary');
 
-const handlers = { commands: {}, actions: [] };
+const handlers = { commands: {}, actions: [], text: null };
 const fakeBot = {
   command(name, fn) {
     handlers.commands[name] = fn;
@@ -50,24 +50,42 @@ const fakeBot = {
   action(pattern, fn) {
     handlers.actions.push({ pattern, fn });
   },
+  on(event, fn) {
+    if (event === 'text') handlers.text = fn;
+  },
 };
 registerChannel(fakeBot);
 registerSummary(fakeBot);
 
 const PREMIUM = { plan: 'monthly', status: 'active' };
 
-function makeCtx({ from, subscription, text }) {
+function makeCtx({ from, subscription, text, chatType }) {
   const replies = [];
+  const edits = [];
   const chatActions = [];
+  // Every keyboard the handler drew, in order, so a test can assert on what
+  // the user is actually looking at rather than only on the body text.
+  const markups = [];
+  const record = (msg, extra) => {
+    if (extra && extra.reply_markup) markups.push(extra.reply_markup);
+  };
   return {
-    chat: { id: from.id, type: 'private' },
+    chat: { id: from.id, type: chatType || 'private' },
     from,
     state: { subscription: subscription || null, lang: 'en' },
     message: { text, message_id: 1, date: Math.floor(Date.now() / 1000) },
     replies,
+    edits,
+    markups,
     chatActions,
-    reply: async (msg) => {
+    reply: async (msg, extra) => {
       replies.push(msg);
+      record(msg, extra);
+      return { message_id: 1 };
+    },
+    editMessageText: async (msg, extra) => {
+      edits.push(msg);
+      record(msg, extra);
       return { message_id: 1 };
     },
     sendChatAction: async (action) => {
@@ -77,15 +95,33 @@ function makeCtx({ from, subscription, text }) {
   };
 }
 
+/** Labels of the last keyboard drawn, flattened across rows. */
+function buttons(ctx) {
+  const markup = ctx.markups[ctx.markups.length - 1];
+  if (!markup) return [];
+  return markup.inline_keyboard.flat().map((b) => b.text);
+}
+
+function callbackData(ctx, matcher) {
+  const markup = ctx.markups[ctx.markups.length - 1];
+  const button = markup.inline_keyboard.flat().find((b) => matcher.test(b.text));
+  return button && button.callback_data;
+}
+
 async function run(command, opts) {
   const ctx = makeCtx(opts);
   await handlers.commands[command](ctx);
   return ctx;
 }
 
+function matchAction(pattern, data) {
+  if (typeof pattern === 'string') return pattern === data ? [data] : null;
+  return pattern.exec(data);
+}
+
 async function fireCallback(data, opts) {
   for (const { pattern, fn } of handlers.actions) {
-    const match = pattern.exec(data);
+    const match = matchAction(pattern, data);
     if (match) {
       const ctx = makeCtx(opts);
       ctx.match = match;
@@ -94,6 +130,16 @@ async function fireCallback(data, opts) {
     }
   }
   throw new Error(`no handler matched ${data}`);
+}
+
+/** A plain message in DM, as it reaches the pending-add capture. */
+async function sendText(text, opts) {
+  const ctx = makeCtx({ ...opts, text });
+  ctx.passedThrough = false;
+  await handlers.text(ctx, async () => {
+    ctx.passedThrough = true;
+  });
+  return ctx;
 }
 
 test.after(() => {
@@ -198,7 +244,7 @@ test('an invalid handle is rejected before any network request is made', async (
     text: '/addchannel http://169.254.169.254/latest/meta-data',
   });
 
-  assert.match(ctx.replies[0], /channel username/i);
+  assert.match(ctx.replies[0], /doesn't look like a channel/i);
   assert.equal(resolveCalls.length, before, 'no lookup was attempted');
 });
 
@@ -295,6 +341,243 @@ test('the picker offers only the channels the plan allows', async () => {
   const ctx = await run('channels', { from: user, text: '/channels' });
   assert.match(ctx.replies[0], /pick_a/);
   assert.match(ctx.replies[0], /free plan/i, 'the locked ones are explained');
+});
+
+test('the list is tappable: one button per channel, plus Add', async () => {
+  const user = { id: 720, first_name: 'Tapper' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+  for (const name of ['tap_one', 'tap_two']) {
+    db.linkUserToChat(db.getOrCreateChannel({ username: name, title: name }).id, user.id);
+  }
+
+  const ctx = await run('channels', { from: user, subscription: PREMIUM, text: '/channels' });
+  const labels = buttons(ctx);
+
+  assert.ok(labels.some((l) => l.includes('tap_one')), 'the first channel is tappable');
+  assert.ok(labels.some((l) => l.includes('tap_two')), 'so is the second');
+  assert.ok(labels.some((l) => /Add channel/i.test(l)), 'and adding is one tap away');
+  assert.ok(!labels.some((l) => /Remove/i.test(l)), 'Remove stays hidden until something is selected');
+});
+
+test('selecting channels and pressing Remove unfollows exactly those', async () => {
+  const user = { id: 721, first_name: 'Selector' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+  const ids = {};
+  for (const name of ['sel_a', 'sel_b', 'sel_c']) {
+    ids[name] = db.getOrCreateChannel({ username: name, title: name }).id;
+    db.linkUserToChat(ids[name], user.id);
+  }
+
+  await fireCallback(`channel:toggle:${ids.sel_a}`, { from: user, subscription: PREMIUM });
+  const afterSecond = await fireCallback(`channel:toggle:${ids.sel_c}`, { from: user, subscription: PREMIUM });
+
+  const labels = buttons(afterSecond);
+  assert.ok(labels.some((l) => /Remove \(2\)/.test(l)), 'the button counts what is selected');
+  assert.equal(labels.filter((l) => l.startsWith('☑️')).length, 2, 'and both are marked');
+
+  const removed = await fireCallback('channel:remove', { from: user, subscription: PREMIUM });
+  assert.ok(removed.replies.some((r) => /sel_a/.test(r) && /sel_c/.test(r)), 'both are named back');
+
+  const left = db.getUserChannels(user.id).map((c) => c.username);
+  assert.deepEqual(left, ['sel_b'], 'and only the unselected one survives');
+});
+
+test('a second tap deselects, so Remove cannot fire on a stale selection', async () => {
+  const user = { id: 722, first_name: 'Undecided' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+  const id = db.getOrCreateChannel({ username: 'undecided_chan', title: 'Undecided' }).id;
+  db.linkUserToChat(id, user.id);
+
+  await fireCallback(`channel:toggle:${id}`, { from: user, subscription: PREMIUM });
+  await fireCallback(`channel:toggle:${id}`, { from: user, subscription: PREMIUM });
+
+  const ctx = await fireCallback('channel:remove', { from: user, subscription: PREMIUM });
+  assert.ok(ctx.replies.some((r) => /Tap a channel/i.test(r)), 'it asks for a selection');
+  assert.equal(db.getUserChannels(user.id).length, 1, 'and removes nothing');
+});
+
+test('Remove only ever touches the caller, even for a channel someone else follows', async () => {
+  const owner = { id: 723, first_name: 'Owner' };
+  const other = { id: 724, first_name: 'Other' };
+  db.getOrCreateUser({ id: owner.id, firstName: owner.first_name });
+  db.getOrCreateUser({ id: other.id, firstName: other.first_name });
+  const id = db.getOrCreateChannel({ username: 'button_shared', title: 'Shared' }).id;
+  db.linkUserToChat(id, owner.id);
+  db.linkUserToChat(id, other.id);
+
+  await fireCallback(`channel:toggle:${id}`, { from: other, subscription: PREMIUM });
+  await fireCallback('channel:remove', { from: other, subscription: PREMIUM });
+
+  assert.equal(db.getUserChannels(other.id).length, 0);
+  assert.equal(db.getUserChannels(owner.id).length, 1, "another user's list is untouched");
+});
+
+test('selecting a channel that is already gone re-draws the list instead of failing', async () => {
+  // callback_data comes from the client, so a keyboard drawn before a removal
+  // on another device still offers rows that no longer exist.
+  const user = { id: 725, first_name: 'Stale' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+  const id = db.getOrCreateChannel({ username: 'stale_chan', title: 'Stale' }).id;
+
+  const ctx = await fireCallback(`channel:toggle:${id}`, { from: user, subscription: PREMIUM });
+  assert.ok(ctx.replies.some((r) => /not following that channel/i.test(r)));
+  assert.equal(ctx.edits.length, 1, 'the list is refreshed to what is actually there');
+});
+
+test('Add takes the next message as the channel — a bare name, an @name or a link', async () => {
+  for (const [id, input, expected] of [
+    [730, 'barename_chan', 'barename_chan'],
+    [731, '@athandle_chan', 'athandle_chan'],
+    [732, 'https://t.me/linked_chan', 'linked_chan'],
+  ]) {
+    const user = { id, first_name: 'Adder' };
+    db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+
+    await fireCallback('channel:add', { from: user, subscription: PREMIUM });
+    const ctx = await sendText(input, { from: user, subscription: PREMIUM });
+
+    assert.equal(ctx.passedThrough, false, 'the answer was consumed, not passed on');
+    assert.deepEqual(
+      db.getUserChannels(user.id).map((c) => c.username),
+      [expected],
+      `${input} should follow @${expected}`
+    );
+    assert.ok(buttons(ctx).some((l) => /Add channel/i.test(l)), 'the refreshed list comes back with it');
+  }
+});
+
+test('a typo at the Add prompt keeps the prompt open', async () => {
+  const user = { id: 733, first_name: 'Typo' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+
+  await fireCallback('channel:add', { from: user, subscription: PREMIUM });
+
+  const typo = await sendText('h', { from: user, subscription: PREMIUM });
+  assert.match(typo.replies[0], /doesn't look like a channel/i);
+  assert.equal(db.getUserChannels(user.id).length, 0);
+
+  // Still waiting: retyping is enough, no second trip through the button.
+  const retry = await sendText('@retry_chan', { from: user, subscription: PREMIUM });
+  assert.equal(retry.passedThrough, false);
+  assert.deepEqual(db.getUserChannels(user.id).map((c) => c.username), ['retry_chan']);
+});
+
+test('the Add prompt captures one message, and only that one', async () => {
+  const user = { id: 734, first_name: 'Once' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+
+  await fireCallback('channel:add', { from: user, subscription: PREMIUM });
+  await sendText('@once_chan', { from: user, subscription: PREMIUM });
+
+  const after = await sendText('just chatting', { from: user, subscription: PREMIUM });
+  assert.equal(after.passedThrough, true, 'the next message is an ordinary message again');
+  assert.equal(db.getUserChannels(user.id).length, 1);
+});
+
+test('commands and menu buttons are never swallowed by a pending Add', async () => {
+  // This handler sits ahead of the ones registered by later command modules,
+  // so anything that is really a menu tap has to keep flowing — otherwise
+  // tapping ⭐ Subscribe at the prompt would try to follow a channel by that name.
+  const user = { id: 735, first_name: 'Escapee' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+
+  await fireCallback('channel:add', { from: user, subscription: PREMIUM });
+  const menuTap = await sendText('⭐ Subscribe', { from: user, subscription: PREMIUM });
+  assert.equal(menuTap.passedThrough, true);
+
+  const command = await sendText('/summary', { from: user, subscription: PREMIUM });
+  assert.equal(command.passedThrough, true);
+  assert.equal(db.getUserChannels(user.id).length, 0, 'nothing was added along the way');
+});
+
+test('nothing is captured in a group, where the next message is somebody talking', async () => {
+  const user = { id: 736, first_name: 'Grouped' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+
+  const tapped = await fireCallback('channel:add', {
+    from: user,
+    subscription: PREMIUM,
+    chatType: 'supergroup',
+  });
+  assert.ok(tapped.replies.some((r) => /addchannel/.test(r)), 'it points at the command instead');
+
+  const chatter = await sendText('anything at all', {
+    from: user,
+    subscription: PREMIUM,
+    chatType: 'supergroup',
+  });
+  assert.equal(chatter.passedThrough, true);
+  assert.equal(db.getUserChannels(user.id).length, 0);
+});
+
+test('Add says no at the cap instead of asking for a name it will refuse', async () => {
+  const user = { id: 737, first_name: 'Capped' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+  db.linkUserToChat(db.getOrCreateChannel({ username: 'capped_first', title: 'First' }).id, user.id);
+
+  const ctx = await fireCallback('channel:add', { from: user, subscription: null });
+  assert.match(ctx.replies.join('\n'), /free plan includes/i);
+
+  // And the prompt was never armed, so the next message stays an ordinary one.
+  const after = await sendText('@sneaky_chan', { from: user, subscription: null });
+  assert.equal(after.passedThrough, true);
+  assert.equal(db.getUserChannels(user.id).length, 1);
+});
+
+test('a bare /addchannel in a DM asks for the name instead of reciting the syntax', async () => {
+  const user = { id: 738, first_name: 'Bare' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+
+  const ctx = await run('addchannel', { from: user, subscription: PREMIUM, text: '/addchannel' });
+  assert.match(ctx.replies[0], /Send me the channel/i);
+
+  const answered = await sendText('@bare_chan', { from: user, subscription: PREMIUM });
+  assert.equal(answered.passedThrough, false);
+  assert.deepEqual(db.getUserChannels(user.id).map((c) => c.username), ['bare_chan']);
+});
+
+test('cancelling the Add prompt leaves the next message alone', async () => {
+  const user = { id: 739, first_name: 'Canceller' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+
+  await fireCallback('channel:add', { from: user, subscription: PREMIUM });
+  const cancelled = await fireCallback('channel:addcancel', { from: user, subscription: PREMIUM });
+  assert.match(cancelled.edits[0], /Cancelled/i);
+
+  const after = await sendText('@ignored_chan', { from: user, subscription: PREMIUM });
+  assert.equal(after.passedThrough, true);
+  assert.equal(db.getUserChannels(user.id).length, 0);
+});
+
+test('a bare /removechannel opens the list rather than teaching a syntax', async () => {
+  const user = { id: 740, first_name: 'Lazy' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+  db.linkUserToChat(db.getOrCreateChannel({ username: 'lazy_chan', title: 'Lazy Chan' }).id, user.id);
+
+  const ctx = await run('removechannel', { from: user, subscription: PREMIUM, text: '/removechannel' });
+  assert.ok(callbackData(ctx, /Lazy Chan/), 'the channel is there to tap');
+  assert.equal(db.getUserChannels(user.id).length, 1, 'and nothing was removed by opening it');
+});
+
+test('channels locked by the plan are marked, and can still be removed', async () => {
+  // The way out of "you follow more than your plan allows" is removing one, so
+  // the locked rows have to stay tappable.
+  const user = { id: 741, first_name: 'Lapsed' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+  const ids = ['lock_one', 'lock_two'].map((name) => {
+    const id = db.getOrCreateChannel({ username: name, title: name }).id;
+    db.linkUserToChat(id, user.id);
+    return id;
+  });
+
+  const ctx = await run('channels', { from: user, subscription: null, text: '/channels' });
+  const locked = buttons(ctx).filter((l) => l.includes('🔒'));
+  assert.equal(locked.length, 1, 'exactly the one past the free allowance is marked');
+  assert.ok(locked[0].includes('lock_two'));
+
+  await fireCallback(`channel:toggle:${ids[1]}`, { from: user, subscription: null });
+  await fireCallback('channel:remove', { from: user, subscription: null });
+  assert.deepEqual(db.getUserChannels(user.id).map((c) => c.username), ['lock_one']);
 });
 
 test('channel posts are summarized from the live fetch, not from stored messages', async () => {
