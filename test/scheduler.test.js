@@ -21,10 +21,40 @@ deepseek.summarize = async () => 'stub summary';
 // scheduler.js (which constructs one at module load) is required.
 const { Telegram } = require('telegraf');
 const sentMessages = [];
+
+// Scripted failures, per recipient: a queue of errors consumed one per send
+// attempt, so a test can say "429 once, then succeed" and watch what the
+// scheduler does in between.
+const sendScript = new Map();
+
+function scriptSends(chatId, errors) {
+  sendScript.set(chatId, [...errors]);
+}
+
+function telegramError(code, description, parameters) {
+  const error = new Error(code + ': ' + description);
+  error.response = { error_code: code, description, parameters };
+  error.code = code;
+  error.description = description;
+  error.parameters = parameters;
+  return error;
+}
+
 Telegram.prototype.sendMessage = async function (chatId, text) {
+  const queued = sendScript.get(chatId);
+  const next = queued && queued.length > 0 ? queued.shift() : null;
+  if (next) throw next;
   sentMessages.push({ chatId, text });
   return { message_id: 1 };
 };
+
+// Collects the waits instead of taking them, so a test can assert that the
+// scheduler waited exactly as long as Telegram asked without the suite
+// actually sleeping for it.
+function recordingSleep() {
+  const waits = [];
+  return { waits, sleep: async (ms) => { waits.push(ms); } };
+}
 
 const db = require('../src/services/database');
 const { connection } = require('../src/services/queue');
@@ -197,4 +227,97 @@ test('retention sweeps run and delete without Redis, because a privacy promise c
   } finally {
     stop();
   }
+});
+
+// --- Delivery under Telegram's rate limits and blocks (case-10 / case-11) ---
+
+function setUpSubscriber(userId, chatId, hourUtc, title) {
+  db.getOrCreateUser({ id: userId, username: 'u' + userId, firstName: 'U' });
+  db.getOrCreateChat({ id: chatId, title, type: 'group' });
+  db.linkUserToChat(chatId, userId);
+  db.createSubscription({
+    userId,
+    plan: 'monthly',
+    starsPaid: 300,
+    expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+  });
+  db.saveMessage({ chatId, messageId: 1, userId, username: 'u' + userId, text: 'something worth summarizing' });
+  db.setScheduledDigest({ chatId, userId, hourUtc });
+}
+
+function digestRow(chatId, userId) {
+  return db.db
+    .prepare('SELECT enabled, last_sent_at FROM scheduled_digests WHERE chat_id = ? AND user_id = ?')
+    .get(chatId, userId);
+}
+
+function eventCount(type, userId) {
+  return db.db.prepare('SELECT COUNT(*) c FROM events WHERE event_type = ? AND user_id = ?').get(type, userId).c;
+}
+
+test('a 429 is retried after the delay Telegram asked for, and the digest still arrives', async () => {
+  setUpSubscriber(330, -330, 6, 'RateLimited');
+  scriptSends(330, [telegramError(429, 'Too Many Requests: retry after 2', { retry_after: 2 })]);
+
+  const { waits, sleep } = recordingSleep();
+  const before = sentMessages.length;
+  await withUtcHour(6, () => runDueDigests({ sleep }));
+
+  assert.equal(sentMessages.length, before + 1, 'the digest is delivered on the retry');
+  assert.ok(waits.includes(2000), `expected a 2000ms wait from retry_after, got ${JSON.stringify(waits)}`);
+  assert.ok(digestRow(-330, 330).last_sent_at, 'a delivered digest is marked sent');
+});
+
+test('a user who blocked the bot has their digest disabled, and the loop carries on', async () => {
+  setUpSubscriber(331, -331, 7, 'Blocker');
+  setUpSubscriber(332, -332, 7, 'Fine');
+  scriptSends(331, [telegramError(403, 'Forbidden: bot was blocked by the user')]);
+
+  const { sleep } = recordingSleep();
+  const before = sentMessages.length;
+  await withUtcHour(7, () => runDueDigests({ sleep }));
+
+  assert.equal(digestRow(-331, 331).enabled, 0, 'the blocked user stops being retried daily for ever');
+  assert.equal(eventCount('digest_disabled_blocked', 331), 1, 'and it is visible as churn in /stats');
+
+  // One person's permanent failure must never end the run for everyone else.
+  assert.equal(sentMessages.length, before + 1);
+  assert.equal(sentMessages[sentMessages.length - 1].chatId, 332);
+
+  // Blocking is not a deletion request: the data stays.
+  assert.ok(db.db.prepare('SELECT COUNT(*) c FROM messages WHERE chat_id = -331').get().c > 0);
+
+  // And a disabled digest is genuinely out of the running.
+  assert.ok(!db.getDueScheduledDigests(7).some((d) => d.user_id === 331));
+});
+
+test('a rate limit that never clears disables nothing and leaves the digest to retry', async () => {
+  setUpSubscriber(333, -333, 8, 'StillLimited');
+  scriptSends(333, [
+    telegramError(429, 'Too Many Requests: retry after 1', { retry_after: 1 }),
+    telegramError(429, 'Too Many Requests: retry after 1', { retry_after: 1 }),
+    telegramError(429, 'Too Many Requests: retry after 1', { retry_after: 1 }),
+  ]);
+
+  const { sleep } = recordingSleep();
+  const before = sentMessages.length;
+  await withUtcHour(8, () => runDueDigests({ sleep }));
+
+  assert.equal(sentMessages.length, before, 'nothing was delivered');
+  assert.equal(digestRow(-333, 333).enabled, 1, 'a 429 is not a reason to switch someone off');
+  assert.equal(eventCount('digest_disabled_blocked', 333), 0);
+  assert.equal(digestRow(-333, 333).last_sent_at, null, 'unsent means unmarked, so the next tick tries again');
+});
+
+test('a network error disables nothing either', async () => {
+  setUpSubscriber(334, -334, 11, 'Flaky');
+  // No Telegram response at all — the shape a dropped connection arrives in.
+  scriptSends(334, [new Error('socket hang up'), new Error('socket hang up'), new Error('socket hang up')]);
+
+  const { sleep } = recordingSleep();
+  await withUtcHour(11, () => runDueDigests({ sleep }));
+
+  assert.equal(digestRow(-334, 334).enabled, 1);
+  assert.equal(eventCount('digest_disabled_blocked', 334), 0);
+  assert.equal(digestRow(-334, 334).last_sent_at, null);
 });

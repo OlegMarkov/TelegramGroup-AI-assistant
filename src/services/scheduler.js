@@ -10,10 +10,12 @@ const {
   purgeExpiredMessages,
   purgeRemovedChatData,
   getUserLanguage,
+  disableScheduledDigest,
   getAppState,
   setAppState,
 } = require('./database');
 const { splitForTelegram } = require('../utils/formatters');
+const { createSender, isBlockedError, isBadRequestError } = require('../utils/telegramSend');
 const { t, normalizeLanguage } = require('../utils/i18n');
 const { getLimits } = require('../models/subscription');
 const { generateDigest } = require('./digest');
@@ -38,9 +40,13 @@ async function registerRepeatableTick() {
   );
 }
 
-async function runDueDigests() {
+async function runDueDigests({ sleep } = {}) {
   const hourUtc = new Date().getUTCHours();
   const due = getDueScheduledDigests(hourUtc);
+
+  // One sender for the whole batch, so the pacing spans every recipient rather
+  // than resetting for each one — which would pace nothing at all.
+  const sender = createSender(sleep ? { sleep } : {});
 
   for (const entry of due) {
     const subscription = getActiveSubscription(entry.user_id);
@@ -54,29 +60,63 @@ async function runDueDigests() {
     try {
       const lang = normalizeLanguage(getUserLanguage(entry.user_id));
       const result = await generateDigest(entry.chat_id, entry.user_id, DIGEST_LOOKBACK_HOURS, lang);
-      if (result) {
-        const body =
-          `${t(lang, 'digest.dailyHeader', { chat: entry.chat_title })}\n\n` +
-          `${result.summaryText}${result.highlightBlock}`;
 
-        // Same two hazards as the on-demand path: a digest can exceed
-        // Telegram's 4096-character limit, and model output can carry
-        // unbalanced Markdown. Either one otherwise loses the whole digest.
-        for (const part of splitForTelegram(body)) {
+      if (!result) {
+        // Nothing happened in the window. There is no digest to send, but the
+        // hour has been dealt with, so record it and move on.
+        markDigestSent(entry.chat_id, entry.user_id);
+        continue;
+      }
+
+      const body =
+        `${t(lang, 'digest.dailyHeader', { chat: entry.chat_title })}\n\n` +
+        `${result.summaryText}${result.highlightBlock}`;
+
+      for (const part of splitForTelegram(body)) {
+        await sender.send(async () => {
+          // Same two hazards as the on-demand path: a digest can exceed
+          // Telegram's 4096-character limit, and model output can carry
+          // unbalanced Markdown. Either one otherwise loses the whole digest.
           try {
             await telegram.sendMessage(entry.user_id, part, { parse_mode: 'Markdown' });
           } catch (sendError) {
+            // Only a 400 means "I could not parse that". A block, a rate limit
+            // or a dropped connection would fail identically as plain text, so
+            // hand those back to the sender, which knows what to do with them
+            // and would otherwise lose the formatting for no reason.
+            if (!isBadRequestError(sendError)) throw sendError;
+
             logger.warn('Digest part rejected with Markdown, resending as plain text', {
               userId: entry.user_id,
               error: sendError.message,
             });
             await telegram.sendMessage(entry.user_id, part);
           }
-        }
-        track(EVENTS.SCHEDULED_DIGEST_SENT, { userId: entry.user_id, chatId: entry.chat_id });
+        });
       }
+
+      track(EVENTS.SCHEDULED_DIGEST_SENT, { userId: entry.user_id, chatId: entry.chat_id });
+
+      // Only after the send actually succeeded. Marked any earlier and the
+      // per-hour guard would suppress the retry this failure should get.
       markDigestSent(entry.chat_id, entry.user_id);
     } catch (error) {
+      // A user who blocked the bot returns 403 on every send, for ever. Their
+      // digest stayed enabled, so the tick tried again the next day and every
+      // day after — invisible noise that grows with every user who leaves.
+      if (isBlockedError(error)) {
+        disableScheduledDigest(entry.chat_id, entry.user_id);
+        track(EVENTS.DIGEST_DISABLED_BLOCKED, { userId: entry.user_id, chatId: entry.chat_id });
+        logger.info('Disabled a scheduled digest because the user blocked the bot', {
+          chatId: entry.chat_id,
+          userId: entry.user_id,
+        });
+        // Their data is untouched: blocking the bot is not a deletion request.
+        continue;
+      }
+
+      // Everything else stays enabled and is simply logged, loudly enough to
+      // be findable by user id. One person's failure never ends the loop.
       logger.error('Scheduled digest failed', {
         chatId: entry.chat_id,
         userId: entry.user_id,

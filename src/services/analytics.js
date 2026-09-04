@@ -29,6 +29,9 @@ const EVENTS = {
   FILTER_BLOCKED_LIMIT: 'filter_blocked_limit',
   DIGEST_CONFIGURED: 'digest_configured',
   SCHEDULED_DIGEST_SENT: 'scheduled_digest_sent',
+  // Churn of a kind that is otherwise invisible: someone blocked the bot, so
+  // their digest was switched off rather than retried daily for ever.
+  DIGEST_DISABLED_BLOCKED: 'digest_disabled_blocked',
   SUBSCRIBE_VIEWED: 'subscribe_viewed',
   SUBSCRIPTION_PURCHASED: 'subscription_purchased',
 };
