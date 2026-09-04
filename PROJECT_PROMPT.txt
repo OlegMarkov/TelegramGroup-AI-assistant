@@ -147,6 +147,10 @@ test/                 17 files, node:test, throwaway SQLite per file, all
   cannot re-send a digest already delivered that hour.
 * The rate-limit refusal is localized (it runs before auth(), so it reads the
   stored language only on the rejection path), and its map is swept.
+* Comped subscription rows carrying a hand-typed placeholder charge id are
+  nulled at startup by nullPlaceholderChargeIds() before ensureChargeIdIndex()
+  runs, so idx_subscriptions_charge_id finally gets created. stars_paid = 0 is
+  the signal: a row where no stars moved cannot be a real Telegram charge.
 
 ## KNOWN OPEN ISSUES (verified 2026-09-05, not yet fixed)
 

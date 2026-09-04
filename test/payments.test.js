@@ -277,3 +277,42 @@ test('a comped subscription carries no charge id and is never deduplicated', () 
 
   assert.equal(db.db.prepare('SELECT COUNT(*) c FROM subscriptions WHERE user_id = ?').get(911).c, 2);
 });
+
+test('placeholder charge ids on comped rows are cleared, unblocking the unique index', () => {
+  // Reproduces the live database exactly: the index was never created, because
+  // two subscriptions comped by hand were given the same made-up charge id.
+  db.db.exec('DROP INDEX IF EXISTS idx_subscriptions_charge_id');
+
+  db.getOrCreateUser({ id: 912, firstName: 'CompedA' });
+  db.getOrCreateUser({ id: 913, firstName: 'CompedB' });
+  db.getOrCreateUser({ id: 914, firstName: 'Payer' });
+
+  const insert = db.db.prepare(
+    `INSERT INTO subscriptions (user_id, plan, stars_paid, telegram_charge_id, expires_at)
+     VALUES (?, 'monthly', ?, ?, ?)`
+  );
+  insert.run(912, 0, 'test-comp-placeholder', daysFromNow(30));
+  insert.run(913, 0, 'test-comp-placeholder', daysFromNow(30));
+  insert.run(914, 300, 'charge-912-real', daysFromNow(30));
+
+  assert.equal(
+    db.ensureChargeIdIndex(),
+    false,
+    'the duplicated placeholder is what blocks the index in the first place'
+  );
+
+  assert.equal(db.nullPlaceholderChargeIds(), 2, 'both comped rows are cleared, and only those');
+  assert.equal(db.ensureChargeIdIndex(), true, 'with the placeholders gone the index is created');
+
+  const paid = db.db.prepare('SELECT telegram_charge_id FROM subscriptions WHERE user_id = 914').get();
+  assert.equal(paid.telegram_charge_id, 'charge-912-real', 'a row that recorded real money is untouched');
+
+  for (const userId of [912, 913]) {
+    const row = db.db.prepare('SELECT telegram_charge_id FROM subscriptions WHERE user_id = ?').get(userId);
+    assert.equal(row.telegram_charge_id, null);
+  }
+
+  // Safe to re-run: every deploy executes it again at startup.
+  assert.equal(db.nullPlaceholderChargeIds(), 0);
+  assert.equal(db.ensureChargeIdIndex(), true);
+});

@@ -151,25 +151,61 @@ db.exec(`
     ON chats(username) WHERE source = 'channel';
 `);
 
-// One row per Telegram charge. Telegram re-delivers an update it did not see
-// acknowledged, so without this a redelivered successful_payment grants a
-// second subscription period for one payment. Partial, because comped and
-// legacy rows carry no charge id and must not collide with each other.
-//
-// Guarded rather than asserted: a database that already contains a duplicate
-// (which is the very bug this prevents) must not become a bot that refuses to
-// start. Log it and carry on — createSubscription still deduplicates in code.
-try {
-  db.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_charge_id
-      ON subscriptions(telegram_charge_id) WHERE telegram_charge_id IS NOT NULL;
-  `);
-} catch (error) {
-  logger.error(
-    'Could not add the unique index on subscriptions.telegram_charge_id — there are already duplicate charge ids',
-    { error: error.message }
-  );
+/**
+ * Comped rows were inserted by hand with a made-up charge id, and two of them
+ * sharing that placeholder is exactly what stopped the index below from being
+ * created on the live database.
+ *
+ * A row where no stars changed hands cannot correspond to a real Telegram
+ * charge — plans cost 300 or 3000, and stars_paid is copied straight from the
+ * payment total — so a charge id on such a row is by definition a placeholder
+ * and belongs at NULL, which the partial index ignores.
+ *
+ * Idempotent and safe to re-run on a live database: after the first pass there
+ * is nothing left to match, and it can never touch a row that recorded money.
+ */
+function nullPlaceholderChargeIds() {
+  const { changes } = db
+    .prepare(
+      `UPDATE subscriptions SET telegram_charge_id = NULL
+       WHERE stars_paid = 0 AND telegram_charge_id IS NOT NULL`
+    )
+    .run();
+  if (changes > 0) {
+    logger.info(`Migration: cleared placeholder charge ids on ${changes} comped subscription(s)`);
+  }
+  return Number(changes);
 }
+
+/**
+ * One row per Telegram charge. Telegram re-delivers an update it did not see
+ * acknowledged, so without this a redelivered successful_payment grants a
+ * second subscription period for one payment. Partial, because comped and
+ * legacy rows carry no charge id and must not collide with each other.
+ *
+ * Guarded rather than asserted: a database that already contains a duplicate
+ * (which is the very bug this prevents) must not become a bot that refuses to
+ * start. Log it and carry on — createSubscription still deduplicates in code.
+ */
+function ensureChargeIdIndex() {
+  try {
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_charge_id
+        ON subscriptions(telegram_charge_id) WHERE telegram_charge_id IS NOT NULL;
+    `);
+    return true;
+  } catch (error) {
+    logger.error(
+      'Could not add the unique index on subscriptions.telegram_charge_id — there are already duplicate charge ids',
+      { error: error.message }
+    );
+    return false;
+  }
+}
+
+// Order matters: the placeholders have to go before the index that they block.
+nullPlaceholderChargeIds();
+ensureChargeIdIndex();
 
 logger.info(`SQLite database ready at ${dbPath}`);
 
@@ -879,4 +915,6 @@ module.exports = {
   createSubscription,
   getSubscriptionByChargeId,
   getActiveSubscription,
+  nullPlaceholderChargeIds,
+  ensureChargeIdIndex,
 };
