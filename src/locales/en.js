@@ -296,12 +296,19 @@ module.exports = {
       '• Photos, files, voice messages, or any non-text content\n' +
       '• Private (1:1) conversations you have with other people\n' +
       '• Payment card details — payments go through Telegram Stars, I never see them\n\n' +
+      '*Where summaries are made*\n' +
+      'To write a summary I send the messages from that time window to *DeepSeek*, an AI provider ' +
+      'based in China — so that text is processed outside the EU and the UK. Each message goes as ' +
+      'the sender name plus the first {groupChars} characters. Nothing else leaves the server: ' +
+      '/find searches only my own database, and no ID of yours is attached to the request.\n\n' +
       '*Who sees it*\n' +
-      'Message text is sent to the DeepSeek API to generate summaries. Summaries are visible ' +
-      'to members of that group who ask for them. Nobody else has access.\n\n' +
+      'Summaries are visible to members of that group who ask for them. A summary is cached and ' +
+      'shared within the chat; your keyword highlights are worked out for you alone and are never ' +
+      "shown in anyone else's summary.\n\n" +
       '*How long*\n' +
       '• Messages are deleted automatically after {retentionDays} days\n' +
-      "• If I'm removed from a group, that group's messages are deleted after {purgeDays} days\n\n" +
+      "• If I'm removed from a group, that group's messages are deleted after {purgeDays} days\n" +
+      '• A cached summary is dropped as soon as the conversation changes, and deleted with the messages\n\n' +
       '*Your control*\n' +
       '• /forgetme — delete your messages and settings\n' +
       '• Remove me from a group to stop collection there\n' +

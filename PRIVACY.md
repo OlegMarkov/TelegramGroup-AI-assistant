@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 2026-08-06_
+_Last updated: 2026-09-05_
 
 This policy describes what the Telegram Assistant Bot ("the bot") collects, why, and how to remove it. It describes the behaviour actually implemented in this codebase — the retention periods below are enforced automatically by a scheduled job, not just stated here.
 
@@ -39,11 +39,37 @@ Message text is stored solely to produce the product's core features: AI-generat
 
 ## Third parties
 
-Message text is transmitted to the **DeepSeek API** to generate summaries. This is the only third party that receives message content, and it receives it only at the moment a summary is generated. See DeepSeek's own terms for how they handle API data.
+### Who receives message content
 
-The same applies to posts from public channels a user has added: they are sent to DeepSeek to be summarized at request time. Requests to fetch those posts go to Telegram's own public web preview and carry no information about which user asked.
+Message text is transmitted to the **DeepSeek API** to generate summaries. DeepSeek is operated by Hangzhou DeepSeek Artificial Intelligence Co., Ltd., **a company based in Hangzhou, China**, and the summarization is performed on DeepSeek's own infrastructure — that is, **outside the European Economic Area and the United Kingdom**. If you are in the EEA or the UK, this is a transfer of your data to a country that has not received an EU adequacy decision.
 
-Generated summaries are cached so repeated requests don't re-send the same content.
+DeepSeek is the **only** third party that receives message content, and it receives it only at the moment a summary is generated. See DeepSeek's own terms and privacy policy for how they handle API data.
+
+### What is sent
+
+When a summary is generated, the bot sends DeepSeek a single request containing:
+
+- **A transcript of the lookback window only** — the messages from the requested time range in that one chat, nothing else.
+- For group messages: the **sender's display name or username**, followed by their message text **truncated to the first 300 characters**.
+- For public channel posts: the post text **truncated to the first 600 characters**, with no author name (a channel is a single voice).
+- **The language** the summary should be written in.
+
+At most 200 messages are included in one request; longer windows are cut to the most recent 200.
+
+### What is NOT sent
+
+- **No identifiers.** The request carries no Telegram user ID, no chat ID, no username of the person who asked, and no account of ours that could be linked back to you. DeepSeek receives a block of text and a target language.
+- **Nothing from `/find`.** Search runs entirely against the local database and never leaves the server.
+- **No message beyond the requested window,** and nothing from a chat other than the one being summarized.
+- **No message text at all when a cached summary is reused** — see below.
+
+Requests to fetch public channel posts go to Telegram's own public web preview (`t.me`) and carry no information about which user asked.
+
+### Generated summaries
+
+Generated summaries are cached per (chat, time window, language) so repeated requests don't re-send the same content to DeepSeek. A cached summary is **shared between the users of that chat**, which is why identical requests produce identical text. Keyword highlights are *not* cached — they are recomputed per person from that person's own filters, so one user's keywords are never visible in another user's summary.
+
+The cache has **no fixed expiry**. Instead it is invalidated the moment the underlying conversation changes, and it is deleted outright when the chat's messages are purged or when a participant runs `/forgetme`. It therefore never outlives the messages it was made from.
 
 No data is sold, and no advertising or third-party tracking is present.
 
@@ -59,7 +85,7 @@ No data is sold, and no advertising or third-party tracking is present.
 |---|---|
 | Group messages | **90 days**, then deleted automatically |
 | Messages in a group the bot was removed from | **7 days** after removal, then deleted |
-| Cached summaries | Until the underlying messages change or are deleted |
+| Cached summaries | No fixed expiry; discarded as soon as the underlying messages change, and deleted when those messages are |
 | Filters, settings, usage counters | Until you delete them (`/forgetme`) |
 | Subscription/payment records | Kept as billing records |
 | Analytics events | Kept, but unlinked from your account when you use `/forgetme` |
@@ -77,7 +103,7 @@ Note that `/forgetme` deletes data collected so far. If you continue chatting in
 
 ## A note to group admins
 
-Adding this bot means the text messages of **everyone** in that group will be stored and sent to a third-party AI service. The bot posts a notice explaining this when it joins. You are responsible for ensuring the group's members are comfortable with that — consider asking before adding it, especially in groups discussing sensitive matters.
+Adding this bot means the text messages of **everyone** in that group will be stored and sent to **DeepSeek**, an AI provider based in China, for summarization. The bot posts a notice explaining this when it joins. You are responsible for ensuring the group's members are comfortable with that — consider asking before adding it, especially in groups discussing sensitive matters.
 
 ## Contact
 

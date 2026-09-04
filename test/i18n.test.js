@@ -205,3 +205,33 @@ test('the guide is one sendable Telegram message with balanced Markdown', () => 
     }
   }
 });
+
+test('the privacy policy is one sendable message that still names the processor', () => {
+  // /privacy is the only disclosure most users will ever read, and it is sent
+  // with parse_mode Markdown — so it has the same two hard constraints as the
+  // guide, plus one of its own: it must keep naming who actually receives
+  // message content. Dropping that name is a silent compliance regression, and
+  // it is exactly the kind of thing a copy edit does by accident.
+  const { GROUP_MESSAGE_CHARS } = require('../src/services/digest');
+
+  for (const lang of SUPPORTED_LANGUAGES) {
+    const text = t(lang, 'privacy.policy', {
+      retentionDays: 90,
+      purgeDays: 7,
+      groupChars: GROUP_MESSAGE_CHARS,
+    });
+
+    assert.ok(text.length <= 4096, `the ${lang} privacy policy is ${text.length} chars — Telegram caps a message at 4096`);
+    assert.ok(!text.includes('{'), `the ${lang} privacy policy still has an unfilled placeholder`);
+    assert.ok(text.includes('DeepSeek'), `the ${lang} privacy policy no longer names DeepSeek as the processor`);
+    assert.ok(
+      text.includes(String(GROUP_MESSAGE_CHARS)),
+      `the ${lang} privacy policy should state how much of each message is sent, from the constant`
+    );
+
+    for (const [name, char] of [['bold', '*'], ['code', '`'], ['italic', '_']]) {
+      const count = text.split(char).length - 1;
+      assert.equal(count % 2, 0, `unbalanced ${name} marker (${char}) in the ${lang} privacy policy`);
+    }
+  }
+});

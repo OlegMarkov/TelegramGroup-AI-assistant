@@ -1,5 +1,6 @@
 const config = require('../config');
 const { getUserDataSummary, deleteUserData } = require('../services/database');
+const { GROUP_MESSAGE_CHARS } = require('../services/digest');
 const { formatDate } = require('../utils/formatters');
 const { t, allTranslations } = require('../utils/i18n');
 const logger = require('../utils/logger');
@@ -10,6 +11,7 @@ async function privacyHandler(ctx) {
     t(lang, 'privacy.policy', {
       retentionDays: config.privacy.messageRetentionDays,
       purgeDays: config.privacy.purgeAfterRemovalDays,
+      groupChars: GROUP_MESSAGE_CHARS,
     }),
     { parse_mode: 'Markdown' }
   );

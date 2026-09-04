@@ -151,6 +151,11 @@ test/                 17 files, node:test, throwaway SQLite per file, all
   nulled at startup by nullPlaceholderChargeIds() before ensureChargeIdIndex()
   runs, so idx_subscriptions_charge_id finally gets created. stars_paid = 0 is
   the signal: a row where no stars moved cannot be a real Telegram charge.
+* PRIVACY.md and the /privacy copy now name DeepSeek and say it processes in
+  China, state exactly what is sent (sender name + first 300 chars per group
+  message, 600 per channel post, no identifiers) and what never is (/find never
+  leaves the server), and describe the summary cache's lifetime. The 300 comes
+  from digest.js's exported GROUP_MESSAGE_CHARS, not from the copy.
 
 ## KNOWN OPEN ISSUES (verified 2026-09-05, not yet fixed)
 
