@@ -167,7 +167,10 @@ test('every command published to Telegram has a description in every language', 
 test('every command in the guide and the greeting is one the bot actually answers', () => {
   // Copy drifts faster than code: a command named in the instructions but never
   // registered is a dead end the user finds before we do.
-  const known = new Set([...PUBLIC_COMMANDS, 'addchannel', 'removechannel', 'setprivacy']);
+  // pause/resume are real commands kept out of PUBLIC_COMMANDS on purpose:
+  // they only mean anything inside a group, so publishing them to the "/" menu
+  // would put two dead entries in front of every DM user.
+  const known = new Set([...PUBLIC_COMMANDS, 'addchannel', 'removechannel', 'setprivacy', 'pause', 'resume']);
 
   for (const lang of SUPPORTED_LANGUAGES) {
     const copy = [t(lang, 'help.text'), t(lang, 'start.greeting'), t(lang, 'onboarding.joined')].join('\n');

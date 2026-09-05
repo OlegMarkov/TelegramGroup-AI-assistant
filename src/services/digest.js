@@ -130,6 +130,9 @@ async function generateDigest(chatId, userId, hours, lang = DEFAULT_LANGUAGE) {
     summaryText: normalizeModelMarkdown(summaryText),
     highlightBlock,
     messageCount: items.length,
+    // So callers can add the "this bot is here" footer to a group summary and
+    // not to a channel one, where there are no members to inform.
+    isChannel,
   };
 }
 

@@ -96,6 +96,9 @@ module.exports = {
       '📊 /status — your plan, what you have used, and what is locked\n' +
       '🔒 /privacy — what I store, who sees it, how long I keep it\n' +
       '🗑 /forgetme — delete your messages and settings for good\n' +
+      '🚫 Not comfortable being recorded? /privacy has a button that stops me storing ' +
+      'your messages in every group, while you carry on using everything else\n' +
+      '👮 Group admins: /pause and /resume control collection for the whole chat\n' +
       '🌐 /language — English or Русский\n\n' +
       'Lost? /start brings the menu back.',
   },
@@ -107,12 +110,22 @@ module.exports = {
       '(sender name + timestamp) so I can generate summaries and let you search history. ' +
       'Message text is sent to the DeepSeek API to write those summaries, and is deleted ' +
       'automatically after {retentionDays} days.\n\n' +
-      'Run /privacy for the full details, or /forgetme to delete your own data at any time. ' +
-      'Admins can remove me to stop collection entirely.\n\n' +
+      'Run /privacy for the full details, or /forgetme to delete your own data at any time — ' +
+      'that screen also has a button to stop me storing your messages anywhere.\n\n' +
+      '👮 *Admins*: /pause stops me storing anything in this chat, /resume starts again. ' +
+      'Removing me stops collection entirely.\n\n' +
       '⚠️ For me to see all messages (not just replies/mentions), whoever owns this bot must ' +
       'disable privacy mode via @BotFather → /setprivacy → Disable.\n\n' +
       'Then use /summary here anytime, or message me privately to pick this chat from your list.\n' +
       '/help explains everything I can do.',
+    // Shorter than the arrival notice on purpose: this lands in an established
+    // group, where a wall of text reads as spam and gets the bot removed.
+    newMembers:
+      '👋 Welcome! *Heads up*: I summarize this chat, so I store its text messages ' +
+      '(sender name + timestamp) and send them to the DeepSeek API, based in China, ' +
+      'to write those summaries. They are deleted automatically after {retentionDays} days.\n\n' +
+      '🔒 /privacy — the full details, and a button to stop me storing YOUR messages anywhere.\n' +
+      '🗑 /forgetme — delete what I already have for you.',
   },
 
   summary: {
@@ -133,6 +146,12 @@ module.exports = {
       "ℹ️ You're active in {total} groups, but the free plan only works in {allowed}. " +
       '⭐ /subscribe to unlock the rest.',
     highlightsHeader: '🔔 *Matches your filters*',
+    // Appended to every group summary, so the bot's presence is visible to
+    // people reading it who never saw the notice when it joined.
+    footer: "_Summarized by this bot, which stores this chat's messages. /privacy for what and how long._",
+    chatPaused:
+      '⏸ Collection is paused in this chat, so there is nothing new to summarize.\n' +
+      'A group admin can run /resume to start it again.',
   },
 
   find: {
@@ -309,6 +328,18 @@ module.exports = {
     renewButton: '⭐ Renew',
   },
 
+  moderation: {
+    groupOnly: 'Run this inside the group you want to pause.',
+    adminsOnly: 'Only an admin of this group can pause or resume collection.',
+    alreadyPaused: '⏸ Collection is already paused here.',
+    alreadyActive: '▶️ Collection is already running here.',
+    paused:
+      "⏸ *Paused.* I've stopped storing messages in this chat.\n\n" +
+      'What I already stored is kept until it expires normally — pausing is not a deletion. ' +
+      'Any admin can run /resume to start again.',
+    resumed: "▶️ *Resumed.* I'm storing this chat's messages again. /privacy explains what that means.",
+  },
+
   status: {
     header: '📊 *Where you stand*',
     planFree: '*Plan*: Free',
@@ -363,6 +394,21 @@ module.exports = {
       '• Remove me from a group to stop collection there\n' +
       '• Group admins can restrict or remove me at any time',
     nothingStored: 'I have no messages or group links stored for you.',
+    currentlyStoring: "📥 *Right now*: I'm storing your messages in the groups I'm in.",
+    currentlyOptedOut: "🚫 *Right now*: I'm not storing your messages anywhere.",
+    optOutButton: '🚫 Stop storing my messages',
+    optInButton: '📥 Start storing my messages again',
+    optedOutShort: 'Opted out',
+    optedInShort: 'Opted back in',
+    optedOut:
+      "🚫 Done — I won't store anything you say, in any group, from now on.\n\n" +
+      'This does not delete what I already have: /forgetme does that. ' +
+      'You can still use every command, and summaries of your groups still work — ' +
+      'they just will not include your own messages.',
+    optedIn: "📥 Done — I'm storing your messages again in the groups I'm in.",
+    offerOptOut:
+      'Deleted. Note that I will start storing new messages again as you keep chatting.\n\n' +
+      'Want me to stop collecting them altogether?',
     confirmPrompt:
       '⚠️ This will permanently delete:\n\n' +
       '• {messageCount} of your messages{oldest}\n' +

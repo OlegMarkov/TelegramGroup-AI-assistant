@@ -1,4 +1,5 @@
 const { getOrCreateChat, linkUserToChat, saveMessage } = require('../services/database');
+const { mayStoreMessage } = require('../services/ingestionPolicy');
 const { isGroupChat } = require('../utils/formatters');
 const { isMenuButtonText } = require('../utils/i18n');
 const { track, EVENTS } = require('../services/analytics');
@@ -22,7 +23,12 @@ function ingestion() {
         !message.text.startsWith('/') &&
         !isMenuButtonText(message.text);
 
-      if (isChatContent) {
+      // The chat link above is kept even when the message itself is not
+      // stored: it is what lets this person ask for summaries of chats they
+      // are in, and it holds no message content. An admin pausing the group,
+      // or a member opting out, is a statement about storing what people say —
+      // not about who is allowed to use the bot.
+      if (isChatContent && mayStoreMessage(ctx.chat.id, ctx.from.id)) {
         saveMessage({
           chatId: ctx.chat.id,
           messageId: message.message_id,

@@ -92,18 +92,48 @@ No data is sold, and no advertising or third-party tracking is present.
 
 Retention windows are configurable by the operator via `MESSAGE_RETENTION_DAYS` and `PURGE_AFTER_REMOVAL_DAYS`.
 
+## How you find out the bot is here
+
+The bot posts a data-collection notice when it joins a group. On its own that
+only reaches whoever was in the room that day, so there are two further
+mechanisms:
+
+- **When new people join**, the notice is posted again — at most once every 24
+  hours per group, however many people arrive, so an active group is not spammed
+  into removing the bot.
+- **Every summary carries a footer** naming the bot and linking `/privacy`. That
+  reaches people who read a group without ever joining while the bot was
+  watching, which the join notice cannot.
+
+A direct message to each new member would be the most reliable of the three and
+is not possible: Telegram does not let a bot message someone who has never
+started a conversation with it.
+
 ## Your controls
 
-- **`/privacy`** — see this summary inside Telegram.
+- **`/privacy`** — see this summary inside Telegram, and **stop the bot storing
+  your messages** with one tap. The opt-out applies to **every group**, not just
+  the one you asked in, takes effect on your next message, and is reversible.
+  Everything else keeps working: you can still request summaries and use every
+  command, your own messages simply are not recorded. It does not delete what
+  was stored before — `/forgetme` does that, and offers the opt-out at the same
+  time.
+- **Group admins** can run **`/pause`** in a group to stop the bot storing
+  *anything* there, and `/resume` to start again. Paused means paused: messages
+  already stored are kept until they expire normally, because pausing collection
+  and deleting history are two different requests. While a chat is paused the
+  bot will not produce summaries of it.
 - **`/forgetme`** — permanently delete your stored messages, group links, filters, scheduled digests, and usage counters, and unlink your analytics events. Requires confirmation. Subscription records are retained so billing history and remaining paid time survive.
 - **Remove the bot from a group** — stops collection immediately; that group's stored messages are deleted after the 7-day grace period. (The grace period exists so an accidental removal doesn't destroy history; re-adding the bot within it cancels the deletion.)
 - **Group admins** can remove the bot or restrict its permissions at any time.
 
-Note that `/forgetme` deletes data collected so far. If you continue chatting in a group the bot is still in, new messages will be stored again.
+Note that `/forgetme` deletes data collected so far. If you continue chatting in a group the bot is still in, new messages will be stored again **unless you also opt out** — which is why the deletion confirmation offers that as the next step.
 
 ## A note to group admins
 
-Adding this bot means the text messages of **everyone** in that group will be stored and sent to **DeepSeek**, an AI provider based in China, for summarization. The bot posts a notice explaining this when it joins. You are responsible for ensuring the group's members are comfortable with that — consider asking before adding it, especially in groups discussing sensitive matters.
+Adding this bot means the text messages of **everyone** in that group will be stored and sent to **DeepSeek**, an AI provider based in China, for summarization. The bot posts a notice explaining this when it joins, and again when new people join. You are responsible for ensuring the group's members are comfortable with that — consider asking before adding it, especially in groups discussing sensitive matters.
+
+If you want the bot's summaries but not its collection right now, `/pause` stops the storing without removing the bot. Any admin of the group can run it; the person who owns the bot has no say over your group, and you have no say over the bot.
 
 ## Contact
 

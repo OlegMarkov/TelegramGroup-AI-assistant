@@ -15,7 +15,8 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 - `/status` — your plan and expiry, summaries used today, and how many groups, channels and keywords are active against your allowance, with anything past it marked locked
 - `/language` — switch interface language (English / Русский)
 - `/privacy` — what the bot stores, who sees it, and how long it's kept
-- `/forgetme` — permanently delete your own stored messages and settings
+- `/forgetme` — permanently delete your own stored messages and settings, and opt out of future collection in the same step
+- `/pause` / `/resume` — **group admins only**: stop and restart message collection for a whole chat, without removing the bot
 - `/stats [days]` — admin-only: usage, free→paid and reminder→renewal conversion (default 30 days)
 - `/refund <charge_id>` — admin-only: refund a Stars payment and mark that subscription refunded
 - `/grant <user_id> <days>` — admin-only: comp someone a subscription
@@ -101,7 +102,7 @@ This bot stores other people's group messages and sends them to a third-party AI
 - The timestamp of the last successful sweep is stored in `app_state` and shown in `/stats`, so "is retention actually running?" has an answer that isn't grepping logs. If no sweep has succeeded in 24 hours, the bot logs a warning.
 - `/forgetme` deletes a user's messages, group links, filters, digests, and usage counters, and anonymizes their analytics events. It deliberately keeps their subscription record so billing history and remaining paid time survive, and it invalidates cached summaries for affected chats so deleted text doesn't live on inside a cached summary.
 
-The bot posts a data-collection notice when it joins a group. If you change the retention defaults, update [PRIVACY.md](PRIVACY.md) to match — the `/privacy` command reads the live config, but the policy file does not.
+The bot posts a data-collection notice when it joins a group, again when new members join (throttled to once per 24h per group so an active group is not spammed), and puts a one-line footer naming itself and linking `/privacy` under every group summary. Members can stop the bot storing their own messages anywhere from `/privacy`; group admins can `/pause` collection for the whole chat. The member opt-out and the paused-chat flag are checked in `src/services/ingestionPolicy.js` before every `saveMessage`, cached in memory because that runs on every group message the bot sees. If you change the retention defaults, update [PRIVACY.md](PRIVACY.md) to match — the `/privacy` command reads the live config, but the policy file does not.
 
 ## Stack
 

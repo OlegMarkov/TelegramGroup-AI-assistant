@@ -11,6 +11,7 @@ const {
   incrementSummaryUsage,
 } = require('../services/database');
 const { generateDigest } = require('../services/digest');
+const { isChatPaused } = require('../services/ingestionPolicy');
 const { ChannelUnavailableError } = require('../services/channelSource');
 const { getLimits, PREMIUM_LIMITS } = require('../models/subscription');
 const { isGroupChat, splitForTelegram } = require('../utils/formatters');
@@ -52,6 +53,14 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
   if (!isChannel && !isChatWithinFreeLimit(requesterId, chatId, limits.maxGroups)) {
     track(EVENTS.SUMMARY_BLOCKED_GROUP_LIMIT, { userId: requesterId, chatId });
     return ctx.reply(t(lang, 'summary.blockedGroupLimit', { maxGroups: limits.maxGroups }));
+  }
+
+  // Refused rather than summarized from whatever is still stored. An admin who
+  // paused the group asked the bot to stop reading it, and quietly producing
+  // summaries of the messages from before would answer a question nobody asked.
+  // Checked before the daily allowance so a paused chat cannot burn one.
+  if (isChatPaused(chatId)) {
+    return ctx.reply(t(lang, 'summary.chatPaused'));
   }
 
   const usageToday = getSummaryUsageToday(requesterId);
@@ -97,7 +106,11 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
   incrementSummaryUsage(requesterId);
   track(EVENTS.SUMMARY_COMPLETED, { userId: requesterId, chatId });
 
-  const body = `${t(lang, 'summary.header', { hours })}\n\n${result.summaryText}${result.highlightBlock}`;
+  // Assembled per request and never cached, like the header: a footer inside
+  // the cached text would be shared across every requester and every window.
+  // Groups only — a channel summary has no members to tell.
+  const footer = result.isChannel ? '' : `\n\n${t(lang, 'summary.footer')}`;
+  const body = `${t(lang, 'summary.header', { hours })}\n\n${result.summaryText}${result.highlightBlock}${footer}`;
 
   let sent;
   for (const part of splitForTelegram(body)) {

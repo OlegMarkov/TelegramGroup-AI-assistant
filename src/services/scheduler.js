@@ -71,9 +71,12 @@ async function runDueDigests({ sleep } = {}) {
         continue;
       }
 
+      // Same footer as the on-demand path, assembled per request rather than
+      // cached, and only for groups.
+      const footer = result.isChannel ? '' : `\n\n${t(lang, 'summary.footer')}`;
       const body =
         `${t(lang, 'digest.dailyHeader', { chat: entry.chat_title })}\n\n` +
-        `${result.summaryText}${result.highlightBlock}`;
+        `${result.summaryText}${result.highlightBlock}${footer}`;
 
       for (const part of splitForTelegram(body)) {
         await sender.send(async () => {

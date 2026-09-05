@@ -53,7 +53,7 @@ src/bot.js            Telegraf init, middleware chain, command registration,
                       graceful shutdown, publishes the "/" command menu.
 src/config.js         All env vars in one place.
 src/commands/         start help summary find filter channel subscribe status
-                      digest stats admin privacy language
+                      digest stats admin moderation privacy language fallback
                       — each exports (bot) => {...}
 src/services/
   database.js         node:sqlite (DatabaseSync), WAL, schema + migrations,
@@ -68,6 +68,8 @@ src/services/
                       Retention sweeps run on a plain unref'd setInterval,
                       independent of Redis.
   payments.js         Stars invoice, pre_checkout, successful_payment.
+  ingestionPolicy.js  "May I store this?" - paused chats + opted-out members,
+                      cached in memory because it runs on every group message.
   ../utils/telegramSend.js  Paced, retrying sender: 20/sec, waits out a 429 for
                       its retry_after, bounded retries, blocked/bad-request
                       classification. Shared by the scheduler and reminders.
@@ -184,6 +186,19 @@ test/                 17 files, node:test, throwaway SQLite per file, all
   /grant writes telegram_charge_id NULL — a placeholder is what broke the
   index. Comps use plan 'comp', which is deliberately NOT in
   SUBSCRIPTION_PLANS, because pre-checkout validates purchases against that map.
+* Late joiners are reached two ways: the notice is re-posted on
+  new_chat_members (claimJoinNotice throttles it to once per 24h per chat, and
+  the claim IS the check so a burst of joins cannot each decide it is due), and
+  every GROUP summary carries a footer naming the bot and linking /privacy.
+  A DM per new member is impossible - Telegram will not let a bot message a
+  stranger.
+* Group admins get /pause and /resume, gated on getChatMember and failing
+  CLOSED - a completely different notion of "admin" from config.adminUserIds.
+  Members get a per-user opt-out from /privacy that applies in EVERY chat and is
+  offered again after /forgetme. Both are checked in ingestionPolicy.js before
+  saveMessage; the chat link is still kept, because being unrecorded is not the
+  same as being unable to use the bot. A paused chat refuses /summary rather
+  than summarizing what is still stored.
 * Comped subscription rows carrying a hand-typed placeholder charge id are
   nulled at startup by nullPlaceholderChargeIds() before ensureChargeIdIndex()
   runs, so idx_subscriptions_charge_id finally gets created. stars_paid = 0 is
@@ -196,9 +211,7 @@ test/                 17 files, node:test, throwaway SQLite per file, all
 2. Digest times are UTC-only with 4 fixed hour choices; there is no per-user
    timezone.
 3. /find uses LIKE '%q%' with no FTS index and no escaping of % / _ .
-4. Group members who join after the bot has no way of learning it is there;
-   the join notice is posted once.
-5. getRecentMessages caps at 200 messages with no note to the user when a
+4. getRecentMessages caps at 200 messages with no note to the user when a
    busier window is truncated.
 
 

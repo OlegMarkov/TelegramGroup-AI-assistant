@@ -171,6 +171,19 @@ addColumnIfMissing('chats', 'username', 'TEXT');
 // and /status can only describe one of those honestly.
 addColumnIfMissing('scheduled_digests', 'disabled_reason', 'TEXT');
 
+// When the data-collection notice was last posted in a group, so a burst of
+// joins produces one notice rather than one per person. NULL means never.
+addColumnIfMissing('chats', 'notice_posted_at', 'TEXT');
+
+// When a group admin paused ingestion. NULL means the bot is collecting.
+// Existing messages are untouched: pausing stops collection, it is not a
+// deletion request.
+addColumnIfMissing('chats', 'paused_at', 'TEXT');
+
+// A member who asked not to be recorded, anywhere. Checked before every
+// saveMessage, so it has to be cheap - see services/ingestionPolicy.js.
+addColumnIfMissing('users', 'ingestion_opted_out', 'INTEGER NOT NULL DEFAULT 0');
+
 // One row per channel, no matter how many users follow it. Handles are stored
 // lowercased so @Durov and @durov cannot become two chats holding two copies
 // of the same content.
@@ -335,6 +348,62 @@ function getOrCreateChat({ id, title, type, addedBy }) {
 
 function deactivateChat(chatId) {
   db.prepare(`UPDATE chats SET is_active = 0, deactivated_at = datetime('now') WHERE id = ?`).run(chatId);
+}
+
+/**
+ * Takes the right to post the join notice, if it is due.
+ *
+ * The claim and the check are one statement on purpose. Several people joining
+ * at once produce several updates, and a read-then-write would let each of them
+ * decide the notice was due before any of them had posted it - which is exactly
+ * the spam this throttle exists to prevent.
+ *
+ * Returns true at most once per throttle window, to whichever caller got there
+ * first.
+ */
+function claimJoinNotice(chatId, throttleHours) {
+  const result = db
+    .prepare(
+      `UPDATE chats SET notice_posted_at = datetime('now')
+       WHERE id = ?
+         AND (notice_posted_at IS NULL OR notice_posted_at < datetime('now', ?))`
+    )
+    .run(chatId, `-${throttleHours} hours`);
+  return Number(result.changes) > 0;
+}
+
+function setChatPaused(chatId, paused) {
+  db.prepare(`UPDATE chats SET paused_at = ${paused ? "datetime('now')" : 'NULL'} WHERE id = ?`).run(chatId);
+}
+
+function getPausedChatIds() {
+  return db
+    .prepare('SELECT id FROM chats WHERE paused_at IS NOT NULL')
+    .all()
+    .map((r) => r.id);
+}
+
+/**
+ * Members who have asked not to be recorded in any chat.
+ *
+ * Returned as a list rather than queried per message: this decision is needed
+ * on every group message the bot sees, and opting out is rare, so the whole set
+ * fits in memory. ingestionPolicy.js owns the cache.
+ */
+function getOptedOutUserIds() {
+  return db
+    .prepare('SELECT id FROM users WHERE ingestion_opted_out = 1')
+    .all()
+    .map((r) => r.id);
+}
+
+function setUserOptedOut(userId, optedOut) {
+  db.prepare('UPDATE users SET ingestion_opted_out = ? WHERE id = ?').run(optedOut ? 1 : 0, userId);
+}
+
+function isUserOptedOut(userId) {
+  const row = db.prepare('SELECT ingestion_opted_out FROM users WHERE id = ?').get(userId);
+  return Boolean(row && row.ingestion_opted_out);
 }
 
 function getChatById(chatId) {
@@ -1098,6 +1167,12 @@ module.exports = {
   setScheduledDigest,
   disableScheduledDigest,
   getDueScheduledDigests,
+  claimJoinNotice,
+  setChatPaused,
+  getPausedChatIds,
+  getOptedOutUserIds,
+  setUserOptedOut,
+  isUserOptedOut,
   getUserScheduledDigests,
   markDigestSent,
   getCachedDigestSummary,

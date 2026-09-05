@@ -11,7 +11,7 @@ const ingestion = require('./middleware/ingestion');
 const { handlePreCheckoutQuery, handleSuccessfulPayment } = require('./services/payments');
 const { startWorker } = require('./services/queue');
 const { startScheduler, startRetentionSweeps } = require('./services/scheduler');
-const { getOrCreateChat, linkUserToChat, deactivateChat } = require('./services/database');
+const { getOrCreateChat, linkUserToChat, deactivateChat, claimJoinNotice } = require('./services/database');
 const { isGroupChat } = require('./utils/formatters');
 const { t, DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, PUBLIC_COMMANDS } = require('./utils/i18n');
 const { startHeartbeat } = require('./utils/heartbeat');
@@ -32,13 +32,14 @@ registerCommands(bot);
 bot.on('pre_checkout_query', handlePreCheckoutQuery);
 bot.on('successful_payment', handleSuccessfulPayment);
 bot.on('my_chat_member', handleMyChatMemberUpdate);
+bot.on('new_chat_members', handleNewChatMembers);
 
 bot.catch((err, ctx) => {
   logger.error(`Unhandled error for update ${ctx.updateType}`, { error: err.message, stack: err.stack });
 });
 
 function registerCommands(instance) {
-  ['start', 'help', 'summary', 'find', 'filter', 'channel', 'subscribe', 'status', 'digest', 'stats', 'admin', 'privacy', 'language'].forEach((name) => {
+  ['start', 'help', 'summary', 'find', 'filter', 'channel', 'subscribe', 'status', 'digest', 'stats', 'admin', 'moderation', 'privacy', 'language'].forEach((name) => {
     require(`./commands/${name}`)(instance);
   });
 
@@ -48,6 +49,52 @@ function registerCommands(instance) {
   // never see one. Out here, a new command added to the list cannot land on
   // the wrong side of it by accident.
   require('./commands/fallback')(instance);
+}
+
+// Once a day at most. The notice is for people who were not here when the bot
+// arrived; posting it on every join would turn a busy group's membership churn
+// into a stream of identical messages and get the bot removed, which protects
+// nobody.
+const JOIN_NOTICE_THROTTLE_HOURS = 24;
+
+/**
+ * Someone who joins a group three months after the bot did never saw the
+ * notice it posted on arrival. Their messages are stored and sent to a
+ * third-party AI service in another jurisdiction, and nothing has ever told
+ * them the bot exists — /forgetme only helps someone who already knows to run
+ * it.
+ *
+ * This is one of two mechanisms, deliberately. The other is the footer on every
+ * summary, which reaches people who read the group without ever joining while
+ * the bot was watching. A DM to each new member would be the most direct
+ * approach and is not possible: Telegram will not let a bot message a stranger.
+ */
+async function handleNewChatMembers(ctx) {
+  const chat = ctx.chat;
+  if (!isGroupChat(chat)) return;
+
+  const members = ctx.message.new_chat_members || [];
+  // The bot joining is already covered, with a fuller notice, by
+  // handleMyChatMemberUpdate.
+  if (members.every((member) => member.is_bot)) return;
+
+  getOrCreateChat({ id: chat.id, title: chat.title, type: chat.type });
+  if (!claimJoinNotice(chat.id, JOIN_NOTICE_THROTTLE_HOURS)) return;
+
+  const lang = (ctx.state && ctx.state.lang) || DEFAULT_LANGUAGE;
+  try {
+    await ctx.telegram.sendMessage(
+      chat.id,
+      t(lang, 'onboarding.newMembers', { retentionDays: config.privacy.messageRetentionDays }),
+      { parse_mode: 'Markdown' }
+    );
+  } catch (error) {
+    // A notice that cannot be posted must not take the update down with it.
+    logger.warn('Could not post the data-collection notice for new members', {
+      chatId: chat.id,
+      error: error.message,
+    });
+  }
 }
 
 async function handleMyChatMemberUpdate(ctx) {
