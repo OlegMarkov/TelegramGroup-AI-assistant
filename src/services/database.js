@@ -529,15 +529,28 @@ function getRecentMessages(chatId, { hours = 24, limit = 200 } = {}) {
     .all(chatId, `-${hours} hours`, limit);
 }
 
+/**
+ * % and _ are wildcards to LIKE, not characters, so a search for "50%" used to
+ * match every message containing "50" and a search for "a_b" matched "axb".
+ * The user typed a string, not a pattern: escape both, and the backslash doing
+ * the escaping, then tell SQLite what the escape character is.
+ *
+ * ESCAPE has to be spelled out in every LIKE below; without it the backslashes
+ * are matched literally and the search finds nothing at all.
+ */
+function escapeLikePattern(query) {
+  return String(query).replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
 function searchMessages({ chatId, chatIds, query, limit = 20 }) {
-  const like = `%${query}%`;
+  const like = `%${escapeLikePattern(query)}%`;
 
   if (chatId) {
     return db
       .prepare(
         `SELECT m.*, c.title as chat_title FROM messages m
          JOIN chats c ON c.id = m.chat_id
-         WHERE m.chat_id = ? AND m.text LIKE ?
+         WHERE m.chat_id = ? AND m.text LIKE ? ESCAPE '\\'
          ORDER BY m.created_at DESC LIMIT ?`
       )
       .all(chatId, like, limit);
@@ -550,7 +563,7 @@ function searchMessages({ chatId, chatIds, query, limit = 20 }) {
     .prepare(
       `SELECT m.*, c.title as chat_title FROM messages m
        JOIN chats c ON c.id = m.chat_id
-       WHERE m.chat_id IN (${placeholders}) AND m.text LIKE ?
+       WHERE m.chat_id IN (${placeholders}) AND m.text LIKE ? ESCAPE '\\'
        ORDER BY m.created_at DESC LIMIT ?`
     )
     .all(...chatIds, like, limit);

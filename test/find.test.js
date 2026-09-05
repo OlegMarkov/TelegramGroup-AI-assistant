@@ -141,3 +141,43 @@ test('an oversized result set is split rather than rejected whole', async () => 
     assert.ok(body.length <= 4096, `each part must fit Telegram's limit, got ${body.length}`);
   }
 });
+
+test('a search for a literal % or _ means those characters, not LIKE wildcards', () => {
+  // LIKE treats % and _ as wildcards, so "50%" used to match every message
+  // containing "50" and "a_b" matched "axb". The user typed a string.
+  db.getOrCreateUser({ id: 250, username: 'searcher', firstName: 'S' });
+  db.getOrCreateChat({ id: -250, title: 'Wildcards', type: 'group' });
+
+  const texts = [
+    'discount is 50% today',
+    'discount is 5000 today',
+    'the file is called a_b.txt',
+    'the file is called axb.txt',
+    'a literal backslash \\ appears here',
+  ];
+  texts.forEach((text, i) => {
+    db.saveMessage({ chatId: -250, messageId: i + 1, userId: 250, username: 'searcher', text });
+  });
+
+  const percent = db.searchMessages({ chatId: -250, query: '50%' });
+  assert.deepEqual(
+    percent.map((m) => m.text),
+    ['discount is 50% today'],
+    '"50%" must not also match "5000"'
+  );
+
+  const underscore = db.searchMessages({ chatId: -250, query: 'a_b' });
+  assert.deepEqual(
+    underscore.map((m) => m.text),
+    ['the file is called a_b.txt'],
+    '"a_b" must not also match "axb"'
+  );
+
+  // The escape character itself has to survive being searched for, or the
+  // escaping breaks the very thing it was added to fix.
+  const backslash = db.searchMessages({ chatId: -250, query: '\\' });
+  assert.equal(backslash.length, 1);
+
+  // And ordinary searches are untouched.
+  assert.equal(db.searchMessages({ chatId: -250, query: 'discount' }).length, 2);
+});
