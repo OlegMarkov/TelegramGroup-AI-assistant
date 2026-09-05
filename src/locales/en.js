@@ -39,6 +39,9 @@ module.exports = {
     done: 'Done',
     chatFallback: 'Chat {id}',
     tooManyRequests: '⏳ Too many requests. Please try again in {seconds}s.',
+    unclaimedMessage:
+      "🤔 I'm not sure what that refers to. Here's the menu — or /help for the full guide.\n\n" +
+      'If you were answering a question I asked, try tapping the button again.',
   },
 
   start: {

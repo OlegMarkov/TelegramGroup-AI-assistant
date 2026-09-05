@@ -41,6 +41,13 @@ function registerCommands(instance) {
   ['start', 'help', 'summary', 'find', 'filter', 'channel', 'subscribe', 'status', 'digest', 'stats', 'admin', 'privacy', 'language'].forEach((name) => {
     require(`./commands/${name}`)(instance);
   });
+
+  // Registered after every command module, and deliberately kept out of the
+  // list above rather than appended to the end of it: it claims any plain
+  // private message nothing else took, so a module registered behind it would
+  // never see one. Out here, a new command added to the list cannot land on
+  // the wrong side of it by accident.
+  require('./commands/fallback')(instance);
 }
 
 async function handleMyChatMemberUpdate(ctx) {
