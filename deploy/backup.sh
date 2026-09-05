@@ -79,16 +79,33 @@ find "$BACKUP_DIR" -name 'backup-*.db' -type f -mtime "+${KEEP_DAYS}" -print -de
 # schedule so the directory cannot grow without bound.
 find "$BACKUP_DIR" -name 'repo-*.bundle' -type f -mtime "+${KEEP_DAYS}" -print -delete
 
+# Same schedule, nothing extra to remember in cron. It is a no-op until
+# OFFSITE_REMOTE is configured, and a failure here must not make a successful
+# local backup look failed - the local copy has already been written and
+# verified by this point.
+if ! ./deploy/offsite-backup.sh; then
+  echo "WARNING: the off-site copy failed. The local backup above is fine." >&2
+fi
+
 echo "==> Current backups:"
 ls -lh "$BACKUP_DIR" | tail -n +2 | awk '{print "    "$9"  "$5}'
 
 cat <<'EOF'
 
-NOTE: these copies live on the same server as the database and the repo. That
-protects you from a bad deploy or an accidental delete, but NOT from losing the
-VPS itself. Copy them off the box regularly, e.g. from your local machine:
+NOTE: the copies in ./backups live on the same server as the database and the
+repo. That protects you from a bad deploy or an accidental delete, but NOT from
+losing the VPS itself. Two things cover that, and only one of them needs
+somebody to be awake:
 
-    rsync -avz deploy@<server-ip>:~/TelegramGroup-AI-assistant/backups/ ./vps-backups/
+  * ./deploy/offsite-backup.sh, run above, pushes an encrypted copy to object
+    storage. Set OFFSITE_REMOTE and OFFSITE_PASSPHRASE in .env to enable it.
+  * deploy/pull-backups.ps1 copies to a Windows workstation, which has to be
+    powered on for it to happen.
+
+To restore the database from the off-site copy:
+
+    ./deploy/restore-offsite.sh            # verify only, changes nothing
+    ./deploy/restore-offsite.sh --install  # and put it live
 
 To restore from a bundle (recovers full history with no upstream host):
 

@@ -254,6 +254,36 @@ function runRetentionSweep({ force = false } = {}) {
   }
 }
 
+// Daily backups, so two missed days is a pattern rather than a hiccup.
+const BACKUP_STALE_AFTER_MS = 48 * 60 * 60 * 1000;
+const LAST_BACKUP_KEY = 'offsite_backup_at';
+
+/**
+ * Notices an off-site backup that has quietly stopped happening.
+ *
+ * Silent failure is the standard way backups go wrong: a cron job that stops
+ * firing produces no output, and an absence of log lines is not something
+ * anybody notices. deploy/offsite-backup.sh records each success here through
+ * the bot, and the bot is the only thing that is always running, so this is the
+ * one place the absence can be turned into a message.
+ *
+ * Only warns once a backup has succeeded at least once. Before that, nobody has
+ * configured it yet and a warning every hour would be noise they learn to
+ * ignore — which is how a real one gets missed later.
+ */
+function warnIfBackupsAreStale() {
+  const stored = Number(getAppState(LAST_BACKUP_KEY));
+  if (!Number.isFinite(stored) || stored <= 0) return;
+
+  const since = Date.now() - stored;
+  if (since > BACKUP_STALE_AFTER_MS) {
+    logger.warn('No off-site backup has succeeded in over 48 hours', {
+      hoursSinceLastBackup: Math.round(since / 3600000),
+      lastBackupAt: new Date(stored).toISOString(),
+    });
+  }
+}
+
 /**
  * Runs the sweep on a plain timer, independent of Redis, BullMQ and Telegram.
  *
@@ -275,6 +305,8 @@ function startRetentionSweeps() {
         hoursSinceLastSweep: lastSweepAt === null ? 'never' : Math.round((Date.now() - lastSweepAt) / 3600000),
       });
     }
+
+    warnIfBackupsAreStale();
   }, RETENTION_SWEEP_INTERVAL_MS);
 
   timer.unref();
@@ -312,4 +344,5 @@ module.exports = {
   runExpiryReminders,
   runRetentionSweep,
   startRetentionSweeps,
+  warnIfBackupsAreStale,
 };

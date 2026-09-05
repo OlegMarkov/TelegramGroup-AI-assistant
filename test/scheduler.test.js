@@ -321,3 +321,38 @@ test('a network error disables nothing either', async () => {
   assert.equal(eventCount('digest_disabled_blocked', 334), 0);
   assert.equal(digestRow(-334, 334).last_sent_at, null);
 });
+
+test('a backup that quietly stopped happening is warned about, and one that never started is not', () => {
+  // Silent failure is how backups actually go wrong: cron stops firing, nothing
+  // is written, and an absence of log lines is not something anyone notices.
+  // The bot is the only always-running process, so it is where the absence has
+  // to become a message.
+  const { warnIfBackupsAreStale } = require('../src/services/scheduler');
+  const warnings = [];
+  const logger = require('../src/utils/logger');
+  const realWarn = logger.warn;
+  logger.warn = (msg, meta) => warnings.push({ msg, meta });
+
+  try {
+    // Nobody has configured backups yet. Warning hourly about a feature they
+    // have not switched on is noise they learn to ignore, which is how a real
+    // warning gets missed later.
+    db.db.prepare("DELETE FROM app_state WHERE key = 'offsite_backup_at'").run();
+    warnIfBackupsAreStale();
+    assert.deepEqual(warnings, [], 'an unconfigured backup is not a failing one');
+
+    // Backed up this morning: fine.
+    db.setAppState('offsite_backup_at', Date.now() - 3 * 3600 * 1000);
+    warnIfBackupsAreStale();
+    assert.deepEqual(warnings, [], 'a recent backup is not worth a warning');
+
+    // Two days of silence is a pattern, not a hiccup.
+    db.setAppState('offsite_backup_at', Date.now() - 60 * 3600 * 1000);
+    warnIfBackupsAreStale();
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0].msg, /over 48 hours/);
+    assert.equal(warnings[0].meta.hoursSinceLastBackup, 60);
+  } finally {
+    logger.warn = realWarn;
+  }
+});

@@ -50,10 +50,23 @@ async function statsHandler(ctx) {
   // place that answers "is it actually running?" without reading logs.
   const sweptAt = Number(getAppState('retention_swept_at'));
   const sweptAgo = Number.isFinite(sweptAt) && sweptAt > 0 ? Math.round((Date.now() - sweptAt) / 60000) : null;
+
+  // Backups fail silently by default — a cron job that stops firing produces
+  // no output to notice. Reported in hours, because the interesting question
+  // is "was it today", not "was it in the last few minutes".
+  const backedUpAt = Number(getAppState('offsite_backup_at'));
+  const backedUpAgo =
+    Number.isFinite(backedUpAt) && backedUpAt > 0 ? Math.round((Date.now() - backedUpAt) / 3600000) : null;
+
   sections.push(
-    sweptAgo === null
-      ? '🧹 *Retention*: no sweep has completed yet'
-      : `🧹 *Retention*: last swept ${sweptAgo} min ago`
+    [
+      sweptAgo === null
+        ? '🧹 *Retention*: no sweep has completed yet'
+        : `🧹 *Retention*: last swept ${sweptAgo} min ago`,
+      backedUpAgo === null
+        ? '💾 *Off-site backup*: never (not configured?)'
+        : `💾 *Off-site backup*: ${backedUpAgo}h ago${backedUpAgo > 48 ? ' ⚠️' : ''}`,
+    ].join('\n')
   );
 
   const conversionPct =

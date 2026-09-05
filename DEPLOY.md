@@ -163,6 +163,90 @@ cat ~/.cron-alive && crontab -l | grep -v cron-alive | crontab -
 The backups above sit on the same server as the data they protect, which covers
 a bad deploy or an accidental delete but not losing the VPS itself.
 
+There are two off-site paths, and only one of them needs somebody to be awake.
+
+#### Object storage (encrypted, no workstation needed)
+
+`deploy/offsite-backup.sh` runs at the end of every `backup.sh`, so it is on the
+same cron schedule and there is nothing extra to remember. It encrypts the
+newest snapshot, uploads it, and prunes old remote copies.
+
+Install `rclone` on the server and configure one remote — Backblaze B2, any
+S3-compatible bucket, or anything else rclone speaks:
+
+```bash
+sudo apt-get install -y rclone
+rclone config          # create a remote called e.g. "b2"
+```
+
+Then set these in the server's `.env` (never in the repo — `.dockerignore`
+excludes `.env` and `.env.*` from the build context, and `.gitignore` keeps it
+out of git):
+
+```
+OFFSITE_REMOTE=b2:my-bucket/telegram-bot
+OFFSITE_PASSPHRASE=<a long random passphrase>
+OFFSITE_KEEP_DAILY=7
+OFFSITE_KEEP_WEEKLY=4
+```
+
+**Keep a copy of `OFFSITE_PASSPHRASE` somewhere other than this server.** It is
+the only thing that can decrypt those uploads; losing it with the VPS loses the
+backups too, which would defeat the entire point.
+
+Encryption is `openssl enc -aes-256-cbc` with PBKDF2 at 600,000 iterations,
+applied before anything leaves the box. The passphrase is passed via the
+environment rather than the command line, so it does not appear in `ps`. An
+empty passphrase is **refused** rather than treated as "upload in the clear":
+the database holds other people's message content, and PRIVACY.md promises it
+is handled carefully.
+
+Each run writes `daily/backup-<stamp>.db.enc`, plus `weekly/<iso-week>-…` if
+that week has no copy yet — keyed on the ISO week rather than on a weekday, so
+a run missed on Monday still produces that week's copy. Daily copies are pruned
+after 7 days and weekly after 4 weeks.
+
+Before uploading, the script decrypts what it is about to send and checks it is
+a readable database. Encrypting the right file in a way that cannot be reversed
+otherwise stays invisible until the day it matters.
+
+#### Restoring from an off-site copy
+
+```bash
+./deploy/restore-offsite.sh --list      # what is in the bucket
+./deploy/restore-offsite.sh             # fetch the newest, verify, change nothing
+./deploy/restore-offsite.sh --install   # and put it live
+```
+
+Without `--install` it touches nothing: it downloads, decrypts, and opens the
+file in a **scratch container** using the same `node:sqlite` build the bot runs,
+then prints `integrity_check`, row counts per table, and the newest message
+timestamp. Verifying with whatever sqlite happens to be on the host would prove
+less — the question is whether *the bot* can open this file. The row counts
+matter as much as the integrity check: an empty well-formed database passes
+`integrity_check` and is not a backup of anything.
+
+**Run it without `--install` occasionally.** A backup nobody has restored is a
+hypothesis, not a backup, and this costs nothing to check.
+
+With `--install` it asks for confirmation, stops the bot, moves the current
+database aside (kept, not deleted), removes the stale `-wal` and `-shm` files —
+leaving those next to a restored database is how a "successful" restore comes
+back with the wrong contents — copies the restored file into place, and starts
+the bot again.
+
+#### Noticing when backups stop
+
+A cron job that stops firing produces no output, so the absence is invisible.
+Each successful upload records a timestamp in `app_state` through the bot, and
+the bot — the only always-running process — logs a warning if no off-site backup
+has succeeded in 48 hours. `/stats` shows the age of the last one, flagged with
+a ⚠️ past that threshold. It stays quiet until a backup has succeeded at least
+once, so an unconfigured install is not warned at hourly intervals about a
+feature it never switched on.
+
+#### Workstation pull
+
 From a Windows machine:
 
 ```bash
@@ -189,8 +273,10 @@ Note that **`rsync` is not present on either side** (neither Git Bash nor the
 Ubuntu image ships it), which is why this uses `scp`. At ~85 KB per file the
 lack of delta transfer is irrelevant.
 
-To restore, see the bottom of `deploy/backup.sh` — `git clone` a bundle for the
-source, and copy a `backup-*.db` over `data/bot.db` with the bot stopped.
+To restore from a local or pulled copy, `git clone` a bundle for the source, and
+copy a `backup-*.db` over `data/bot.db` with the bot stopped — removing
+`bot.db-wal` and `bot.db-shm` first. For the object-storage copy, use
+`deploy/restore-offsite.sh`, which does all of that and verifies the result.
 
 ## What "healthy" means
 
