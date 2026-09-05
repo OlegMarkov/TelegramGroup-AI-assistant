@@ -59,6 +59,7 @@ Run `/stats` (restricted to the Telegram user IDs in `ADMIN_USER_IDS`) to get a 
 1. Add the bot to a group. It registers the chat and posts a setup message.
 2. **Disable privacy mode** for the bot via [@BotFather](https://t.me/BotFather) → `/setprivacy` → *Disable*. Without this, Telegram only forwards the bot messages that mention/reply to it, so it can't see general chat activity to summarize.
 3. Anyone who sends a message in the group gets linked to it, so they can also run `/summary` and `/find` from a private DM with the bot.
+4. **Captions count as messages.** A photo, video or file posted with a caption stores the caption text (never the file), flagged with `messages.is_caption` and rendered in the AI transcript behind a `[media] ` prefix so the model reads it as describing an image. The flag is a column rather than part of the text, so that marker never appears in `/find` results or filter highlights. Media with no caption is not stored at all.
 4. Removing the bot from a group (or it being kicked) deactivates tracking for that chat, and its stored messages are purged after a grace period (see below).
 
 ## How channel summaries work

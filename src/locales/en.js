@@ -76,6 +76,7 @@ module.exports = {
       '📝 /summary — what happened recently. Add hours to look further back, like `/summary 12`. ' +
       'In a group it summarizes that group; in DM I ask which chat you mean.\n' +
       '🔎 /find <words> — search everything I have stored for your groups, e.g. `/find deploy schedule`. ' +
+      'Captions on photos and files count too. ' +
       'Channel posts are read live and never stored, so they are not searchable.\n' +
       '🎯 /filter — pick topics, and add keywords of your own: a project, a product, your name. ' +
       'Anything matching gets its own block at the end of every summary. ' +
@@ -370,10 +371,11 @@ module.exports = {
       '🔒 *Privacy*\n\n' +
       '*What I store*\n' +
       "• Text messages sent in groups I've been added to, along with the sender's name and timestamp\n" +
+      '• Captions written on a photo, video or file — the caption text only, never the file itself\n' +
       '• Your Telegram ID, username and first name\n' +
       '• Your filter keywords, subscription status, and command usage counts\n\n' +
       '*What I do NOT store*\n' +
-      '• Photos, files, voice messages, or any non-text content\n' +
+      '• The photos, files and voice messages themselves — I never download them, only a caption someone typed\n' +
       '• Private (1:1) conversations you have with other people\n' +
       '• Payment card details — payments go through Telegram Stars, I never see them\n\n' +
       '*Where summaries are made*\n' +

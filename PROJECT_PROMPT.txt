@@ -199,6 +199,13 @@ test/                 17 files, node:test, throwaway SQLite per file, all
   saveMessage; the chat link is still kept, because being unrecorded is not the
   same as being unable to use the bot. A paused chat refuses /summary rather
   than summarizing what is still stored.
+* Photo/video/document CAPTIONS are ingested as text, flagged with
+  messages.is_caption, and rendered in the AI transcript with a "[media] "
+  prefix so the model reads them as describing an image. The flag is a column
+  rather than baked into the text, so the marker never reaches /find results or
+  filter highlights. Media with no caption stays unstored. PRIVACY.md and the
+  /privacy copy were updated in the same change - this increases what is
+  retained, so the "non-text content is ignored entirely" line was false.
 * Comped subscription rows carrying a hand-typed placeholder charge id are
   nulled at startup by nullPlaceholderChargeIds() before ensureChargeIdIndex()
   runs, so idx_subscriptions_charge_id finally gets created. stars_paid = 0 is
@@ -206,8 +213,9 @@ test/                 17 files, node:test, throwaway SQLite per file, all
 
 ## KNOWN OPEN ISSUES (verified 2026-09-05, not yet fixed)
 
-1. Photo/video CAPTIONS and edited messages are not ingested — caption-only
-   posts are invisible to /summary and /find.
+1. EDITED messages are not ingested — an edit is a separate update type and
+   nothing handles it, so the stored copy keeps the original wording.
+   (Captions ARE ingested as of 2026-09-05.)
 2. Digest times are UTC-only with 4 fixed hour choices; there is no per-user
    timezone.
 3. /find uses LIKE '%q%' with no FTS index and no escaping of % / _ .

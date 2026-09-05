@@ -184,6 +184,12 @@ addColumnIfMissing('chats', 'paused_at', 'TEXT');
 // saveMessage, so it has to be cheap - see services/ingestionPolicy.js.
 addColumnIfMissing('users', 'ingestion_opted_out', 'INTEGER NOT NULL DEFAULT 0');
 
+// Whether this row came from a photo/video caption rather than a plain text
+// message. Stored as a flag rather than baked into the text, so the marker can
+// be added to the AI transcript without also appearing in /find results and
+// filter highlights, where it would just be noise the user did not write.
+addColumnIfMissing('messages', 'is_caption', 'INTEGER NOT NULL DEFAULT 0');
+
 // One row per channel, no matter how many users follow it. Handles are stored
 // lowercased so @Durov and @durov cannot become two chats holding two copies
 // of the same content.
@@ -601,12 +607,20 @@ function isUserLinkedToChat(chatId, userId) {
   );
 }
 
-function saveMessage({ chatId, messageId, userId, username, text, createdAt }) {
+function saveMessage({ chatId, messageId, userId, username, text, createdAt, isCaption = false }) {
   db.prepare(
-    `INSERT INTO messages (chat_id, message_id, user_id, username, text, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO messages (chat_id, message_id, user_id, username, text, created_at, is_caption)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(chat_id, message_id) DO NOTHING`
-  ).run(chatId, messageId, userId || null, username || null, text, createdAt || new Date().toISOString());
+  ).run(
+    chatId,
+    messageId,
+    userId || null,
+    username || null,
+    text,
+    createdAt || new Date().toISOString(),
+    isCaption ? 1 : 0
+  );
 }
 
 /**

@@ -9,6 +9,7 @@ This policy describes what the Telegram Assistant Bot ("the bot") collects, why,
 When the bot is a member of a group chat:
 
 - **Text messages** sent in that group — the message text, the sender's Telegram display name/username, the message ID, and the timestamp.
+- **Captions** written on a photo, video, or file. The caption text is stored exactly like a message; the photo, video or file it was attached to is **not**. A caption is something a person typed, and in many groups it is where the actual content is — someone posts a screenshot and explains it underneath. Media posted with no caption is not stored at all.
 - **Group metadata** — the group's ID, title, and type.
 - **Membership** — which users have been seen active in which groups, so they can request summaries of those groups.
 
@@ -28,7 +29,7 @@ For users who interact with the bot directly:
 
 ## What is NOT collected
 
-- Non-text content: photos, videos, files, voice messages, stickers, and locations are ignored entirely.
+- Non-text content itself: the actual photos, videos, files, voice messages, stickers, and locations are never downloaded or stored. Only a **caption** typed alongside one is kept, as text — see above.
 - Private one-to-one conversations between other people. The bot only sees messages in groups it has been added to, plus direct messages sent to the bot itself.
 - Payment card or banking details. Payments use Telegram Stars; the bot receives only a confirmation and a charge ID, never payment instrument data.
 - Commands themselves (messages starting with `/`) are not stored as chat history.

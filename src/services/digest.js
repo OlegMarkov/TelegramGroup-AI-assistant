@@ -49,6 +49,7 @@ async function loadWindow(chat, hours) {
       id: m.id,
       author: m.username || null,
       text: m.text,
+      isCaption: Boolean(m.is_caption),
     })),
   };
 }
@@ -65,6 +66,13 @@ const CHANNEL_POST_CHARS = 600;
 const HIGHLIGHT_CHARS = 280;
 const MAX_HIGHLIGHTS = 10;
 
+// Marks a caption in the transcript, so the model reads "here is what someone
+// said about a picture" rather than treating it as a remark out of nowhere.
+// Costs about one token per captioned message. Deliberately not stored in the
+// text itself: it would then show up in /find results and filter highlights as
+// though the user had typed it.
+const CAPTION_PREFIX = '[media] ';
+
 function buildTranscript(items, isChannel) {
   // A channel is one voice, so prefixing every line with the same name is
   // noise that costs tokens and tells the model nothing.
@@ -72,7 +80,7 @@ function buildTranscript(items, isChannel) {
     .map((item) =>
       isChannel
         ? truncate(item.text, CHANNEL_POST_CHARS)
-        : `${item.author || 'someone'}: ${truncate(item.text, GROUP_MESSAGE_CHARS)}`
+        : `${item.author || 'someone'}: ${item.isCaption ? CAPTION_PREFIX : ''}${truncate(item.text, GROUP_MESSAGE_CHARS)}`
     )
     .join(isChannel ? '\n\n' : '\n');
 }
