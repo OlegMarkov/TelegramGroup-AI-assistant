@@ -20,11 +20,47 @@ test.after(() => {
   }
 });
 
-test('getOrCreateUser creates once and returns the same row on repeat calls', () => {
+test('getOrCreateUser creates once, and keeps the display fields current after that', () => {
+  // This used to return the existing row untouched, freezing username and
+  // first_name at whatever they were on first contact. Anything reading the
+  // users table was looking at history.
   const u1 = db.getOrCreateUser({ id: 1, username: 'a', firstName: 'A' });
   assert.equal(u1.id, 1);
+
   const u2 = db.getOrCreateUser({ id: 1, username: 'changed', firstName: 'Changed' });
-  assert.equal(u2.username, 'a');
+  assert.equal(u2.id, 1, 'still the same row');
+  assert.equal(u2.username, 'changed');
+  assert.equal(u2.first_name, 'Changed');
+
+  // A handle that is genuinely gone is recorded as gone, not left behind.
+  const u3 = db.getOrCreateUser({ id: 1, username: null, firstName: 'Changed' });
+  assert.equal(u3.username, null);
+});
+
+test('a caller that only knows the id does not thereby erase a name', () => {
+  // /grant comps someone who may never have opened the bot, so it calls this
+  // with an id alone. undefined means "I do not know this field" — reading it
+  // as "empty" would wipe the row of anyone who has one.
+  db.getOrCreateUser({ id: 21, username: 'keeper', firstName: 'Keeper' });
+
+  const row = db.getOrCreateUser({ id: 21 });
+  assert.equal(row.username, 'keeper');
+  assert.equal(row.first_name, 'Keeper');
+});
+
+test('refreshing a username never resets the language the user chose', () => {
+  // auth() passes the Telegram CLIENT locale on every single update. If that
+  // were written back here, one message would silently undo /language. This is
+  // the reason the function used to return early, and it has to survive the
+  // fields that now do get refreshed.
+  db.getOrCreateUser({ id: 22, username: 'old', firstName: 'Old', language: 'en' });
+  db.setUserLanguage(22, 'ru');
+
+  const row = db.getOrCreateUser({ id: 22, username: 'new', firstName: 'New', language: 'en' });
+
+  assert.equal(row.username, 'new', 'the display fields did refresh');
+  assert.equal(row.language, 'ru', 'and the chosen language survived it');
+  assert.equal(db.getUserLanguage(22), 'ru');
 });
 
 test('chat linking: linkUserToChat, getUserChats, isUserLinkedToChat', () => {

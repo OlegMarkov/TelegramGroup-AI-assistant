@@ -237,9 +237,49 @@ ensureChargeIdIndex();
 
 logger.info(`SQLite database ready at ${dbPath}`);
 
+/**
+ * The user row, kept current on the two fields Telegram can change.
+ *
+ * This used to return an existing row untouched, which froze username and
+ * first_name at whatever they were on first contact — someone who changed
+ * their handle kept the old one for ever, and anything reading the users table
+ * (/stats, admin tooling) was looking at history.
+ *
+ * `language` is deliberately NOT refreshed. It is the user's own /language
+ * choice, and auth() passes their Telegram client locale in on every single
+ * update: overwriting it here would silently undo that choice with the next
+ * message they sent. That is the reason this function returned early in the
+ * first place, and it is preserved exactly.
+ *
+ * The write is conditional because this runs in auth() on EVERY update. An
+ * unconditional UPDATE would add a database write to every message the bot
+ * sees, in every group it is in, to change nothing.
+ *
+ * `undefined` means "I do not know this field", not "it is empty". Callers that
+ * only need the row to exist — /grant comping someone who has never opened the
+ * bot — pass an id alone, and must not thereby erase a name. auth() knows the
+ * whole truth and passes null explicitly for a user with no @handle, so
+ * removing a username is still recorded.
+ */
 function getOrCreateUser({ id, username, firstName, language }) {
   const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-  if (existing) return existing;
+
+  if (existing) {
+    const changes = [];
+    const values = [];
+    if (username !== undefined && (username || null) !== existing.username) {
+      changes.push('username = ?');
+      values.push(username || null);
+    }
+    if (firstName !== undefined && (firstName || null) !== existing.first_name) {
+      changes.push('first_name = ?');
+      values.push(firstName || null);
+    }
+    if (changes.length === 0) return existing;
+
+    db.prepare(`UPDATE users SET ${changes.join(', ')} WHERE id = ?`).run(...values, id);
+    return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  }
 
   db.prepare('INSERT INTO users (id, username, first_name, language) VALUES (?, ?, ?, ?)').run(
     id,
