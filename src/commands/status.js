@@ -6,11 +6,13 @@ const {
   getAllowedUserChannels,
   getUserFilters,
   getUserScheduledDigests,
+  getUserTimezoneOffset,
 } = require('../services/database');
 const { getLimits } = require('../models/subscription');
 const { allowedKeywords } = require('../models/filter');
 const { planLabel } = require('../keyboards');
 const { escapeMarkdown, isGroupChat } = require('../utils/formatters');
+const { formatLocalTime, formatOffset } = require('../utils/timezone');
 const { t } = require('../utils/i18n');
 const { track, EVENTS } = require('../services/analytics');
 const logger = require('../utils/logger');
@@ -41,8 +43,15 @@ function allowanceLine(lang, key, { allowed, total, limit }) {
   });
 }
 
-function formatHour(hourUtc) {
-  return `${String(hourUtc).padStart(2, '0')}:00 UTC`;
+/**
+ * A digest hour, in the clock the reader actually uses.
+ *
+ * hour_utc is what the scheduler stores and matches on; the offset only
+ * decides how it is written down here.
+ */
+function formatHour(hourUtc, offsetMinutes) {
+  if (offsetMinutes === null || offsetMinutes === 0) return `${String(hourUtc).padStart(2, '0')}:00 UTC`;
+  return `${formatLocalTime(hourUtc, offsetMinutes)} ${formatOffset(offsetMinutes)}`;
 }
 
 function buildStatus(ctx) {
@@ -111,6 +120,7 @@ function buildStatus(ctx) {
     })
   );
 
+  const offsetMinutes = getUserTimezoneOffset(userId);
   const digests = getUserScheduledDigests(userId);
   lines.push('', t(lang, 'status.digestHeader'));
   if (digests.length === 0) {
@@ -122,7 +132,7 @@ function buildStatus(ctx) {
       const chat = escapeMarkdown(digest.chat_title || t(lang, 'common.chatFallback', { id: digest.chat_id }));
 
       if (digest.enabled) {
-        lines.push(t(lang, 'status.digestOn', { chat, time: formatHour(digest.hour_utc) }));
+        lines.push(t(lang, 'status.digestOn', { chat, time: formatHour(digest.hour_utc, offsetMinutes) }));
       } else if (digest.disabled_reason === 'blocked') {
         // Otherwise this is indistinguishable from having turned it off
         // themselves, and there is nothing to tell them it can be undone.

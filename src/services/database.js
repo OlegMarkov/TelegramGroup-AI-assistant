@@ -190,6 +190,12 @@ addColumnIfMissing('users', 'ingestion_opted_out', 'INTEGER NOT NULL DEFAULT 0')
 // filter highlights, where it would just be noise the user did not write.
 addColumnIfMissing('messages', 'is_caption', 'INTEGER NOT NULL DEFAULT 0');
 
+// The user's clock, as a fixed offset in MINUTES from UTC. NULL means never
+// asked, which is what keeps existing users on exactly the behaviour they have
+// today. Minutes rather than hours because a large number of people live at
+// :30 and :45 offsets. This never reaches the scheduler - see utils/timezone.js.
+addColumnIfMissing('users', 'tz_offset_minutes', 'INTEGER');
+
 // One row per channel, no matter how many users follow it. Handles are stored
 // lowercased so @Durov and @durov cannot become two chats holding two copies
 // of the same content.
@@ -307,6 +313,15 @@ function getOrCreateUser({ id, username, firstName, language }) {
     language || null
   );
   return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+}
+
+function getUserTimezoneOffset(userId) {
+  const row = db.prepare('SELECT tz_offset_minutes FROM users WHERE id = ?').get(userId);
+  return row && row.tz_offset_minutes !== null ? row.tz_offset_minutes : null;
+}
+
+function setUserTimezoneOffset(userId, offsetMinutes) {
+  db.prepare('UPDATE users SET tz_offset_minutes = ? WHERE id = ?').run(offsetMinutes, userId);
 }
 
 function getUserFilters(userId) {
@@ -1193,6 +1208,8 @@ module.exports = {
   setCachedDigestSummary,
   getUserLanguage,
   setUserLanguage,
+  getUserTimezoneOffset,
+  setUserTimezoneOffset,
   purgeExpiredMessages,
   purgeRemovedChatData,
   getUserDataSummary,

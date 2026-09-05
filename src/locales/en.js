@@ -83,7 +83,8 @@ module.exports = {
       'Endings count too — "release" also finds "releases".\n' +
       '📢 /channels — your channel list. Tap to select, ➕ to add, 🗑 to remove. ' +
       '`/addchannel @name` and `/removechannel @name` work too.\n' +
-      '📅 /digest — premium: have the summary arrive by DM every day, at an hour you choose (UTC).\n\n' +
+      '📅 /digest — premium: have the summary arrive by DM every day, at an hour you choose. ' +
+      'Tell me your timezone once and the times are shown in your own clock.\n\n' +
       '*Free vs. premium*\n' +
       '• Summaries — {freeSummaries} a day → unlimited\n' +
       '• Lookback — {freeHours}h → {premiumHours}h\n' +
@@ -280,6 +281,14 @@ module.exports = {
     statusOn: '🔔 Daily digest is ON for *{chat}* at {time}',
     statusOff: '🔕 Daily digest is OFF for *{chat}*',
     pickTime: 'Pick a time (UTC) to receive a daily DM summary:',
+    pickTimezone:
+      '🌍 Where are you? Times below will be shown in your own clock instead of UTC.\n\n' +
+      'This only changes what you see — a digest already set keeps arriving at the same moment.',
+    keepUtc: '🌍 Just use UTC',
+    setTimezone: '🌍 Show these times in my timezone',
+    changeTimezone: '🌍 Timezone: {zone} — change',
+    pickTimeLocal: 'Pick a time to receive a daily DM summary. Times are in your timezone ({zone}):',
+    unknownTimezone: 'I did not recognise that option — reopen /digest.',
     pickChat: 'Which chat do you want to configure?',
     turnOff: '🔕 Turn off',
     saved: 'Saved',
