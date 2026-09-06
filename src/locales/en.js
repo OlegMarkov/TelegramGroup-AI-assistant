@@ -388,6 +388,23 @@ module.exports = {
       'Too noisy? /filter lets you narrow the words, or switch alerts off entirely.',
   },
 
+  broadcast: {
+    // Pre-translated announcements, sent in each recipient's own language.
+    // Free text cannot be translated on the way out, and the preview says so.
+    templates: {
+      maintenance:
+        '🔧 *Scheduled maintenance*\n\n' +
+        'I will be briefly unavailable while I am updated. Summaries and digests ' +
+        'may be delayed for a few minutes. Nothing you have set up is affected.',
+      newFeatures:
+        "✨ *What's new*\n\n" +
+        '📆 Weekly digests, for groups that are not busy every day — /digest\n' +
+        '🔔 Keyword alerts: I can DM you when one of your words comes up — /filter\n' +
+        '🌍 Digest times in your own timezone, not UTC — /digest\n' +
+        '📊 /status shows your plan, usage and limits at a glance',
+    },
+  },
+
   status: {
     header: '📊 *Where you stand*',
     planFree: '*Plan*: Free',

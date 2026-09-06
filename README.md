@@ -21,6 +21,7 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 - `/refund <charge_id>` — admin-only: refund a Stars payment and mark that subscription refunded
 - `/grant <user_id> <days>` — admin-only: comp someone a subscription
 - `/revoke <user_id>` — admin-only: take back every active subscription a user has
+- `/broadcast <text>` / `/broadcast :<name>` — admin-only: announce something to every user. Two-step; the first message only previews
 - `/spend` — admin-only: today's DeepSeek usage against the daily cap; `/spend allow <n>` adds room for today, `/spend reset` zeroes the counter
 
 Everything except the admin commands is published to Telegram's "/" menu at startup by `publishCommandMenu()` in [`src/bot.js`](src/bot.js), in each supported language, with descriptions from the `commands.*` translations. `/stats`, `/refund`, `/grant` and `/revoke` are left out on purpose, and reply with nothing at all to a non-admin: not advertising them is what keeps their existence undiscoverable.
@@ -56,6 +57,20 @@ A weekly digest looks back **168 hours** and is deliberately **exempt** from `PR
 The cap itself stays at 200 until there is a measurement to move it against: `ai_usage` now records `prompt_tokens` and `/spend` reports them, so a week of real traffic gives a real number.
 
 Note that a 168-hour cache entry cannot collide with a 24-hour one — the digest cache is keyed by `(chat_id, hours, language)` — so **every weekly digest is a fresh DeepSeek call**. That is correct, and worth knowing when reading `/spend`.
+
+## Broadcast
+
+The most dangerous command in the bot: it messages every user and cannot be recalled. Shaped accordingly.
+
+**The first message never sends.** It previews, showing the **real** recipient list — computed once and kept, so the number in the preview is the number that gets messaged rather than a count taken twice with a gap in between. Confirming has a ten-minute window; after that the preview is gone rather than sitting there waiting for a mistaken tap.
+
+**Who is excluded.** Not "everyone in `users`": `/forgetme` keeps the row on purpose, so that list would reach people who pressed the delete button. Recipients are anyone with something still attached — a chat, a filter, a digest, a subscription, or an event. A subscription counts deliberately: it survives `/forgetme` by design, and somebody still paying should hear about a price change even if they cleared their history.
+
+**Pre-translated announcements** (`:maintenance`, `:newFeatures`) go to each person in their own language. Free text cannot be, and the preview says so rather than pretending.
+
+**Throttled through the same sender as the scheduler** — `createSender`, which paces, waits out a 429 for its stated `retry_after`, and gives up in a bounded way. Not a BullMQ job: the task predates case-10, which solved this in process, and routing through Redis would add a dependency to a command the operator triggers by hand and watches. It would also buy durability a re-run undoes — re-running a half-finished broadcast double-sends to everyone already reached. If that ever matters the fix is per-recipient delivery tracking, not a queue.
+
+A blocked recipient is counted and the run continues; the summary reports sent, blocked and failed separately.
 
 ## Keyword alerts
 

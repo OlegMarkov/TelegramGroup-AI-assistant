@@ -351,6 +351,38 @@ function getOrCreateUser({ id, username, firstName, language }) {
   return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
 }
 
+/**
+ * Everyone a broadcast should reach.
+ *
+ * "Everyone with a users row" is the wrong list. /forgetme deletes a person's
+ * messages, chat links, filters, digests and counters and anonymizes their
+ * events, but deliberately keeps the row itself — so the table remembers people
+ * who asked to be forgotten and never came back. Messaging them would be a
+ * strange thing to do to somebody who pressed the delete button.
+ *
+ * So the list is anyone with something still attached: a chat, a filter, a
+ * digest, a subscription, or an event. A subscription counts on purpose — it
+ * survives /forgetme by design, and somebody who is still paying should hear
+ * about a price change even if they cleared their history.
+ *
+ * Returned as ids in a stable order, because the count shown in the preview has
+ * to be the count that is actually messaged.
+ */
+function getBroadcastRecipients() {
+  return db
+    .prepare(
+      `SELECT u.id FROM users u
+       WHERE EXISTS (SELECT 1 FROM chat_members cm WHERE cm.user_id = u.id)
+          OR EXISTS (SELECT 1 FROM user_filters f WHERE f.user_id = u.id)
+          OR EXISTS (SELECT 1 FROM scheduled_digests sd WHERE sd.user_id = u.id)
+          OR EXISTS (SELECT 1 FROM subscriptions s WHERE s.user_id = u.id)
+          OR EXISTS (SELECT 1 FROM events e WHERE e.user_id = u.id)
+       ORDER BY u.id`
+    )
+    .all()
+    .map((r) => r.id);
+}
+
 function getAlertSubscribers() {
   return db
     .prepare('SELECT id FROM users WHERE alerts_enabled = 1')
@@ -1382,6 +1414,7 @@ module.exports = {
   setUserLanguage,
   getUserTimezoneOffset,
   setUserTimezoneOffset,
+  getBroadcastRecipients,
   getAlertSubscribers,
   setUserAlertsEnabled,
   takeAlertSlot,

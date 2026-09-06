@@ -33,6 +33,7 @@ const EVENTS = {
   // their digest was switched off rather than retried daily for ever.
   DIGEST_DISABLED_BLOCKED: 'digest_disabled_blocked',
   ALERT_SENT: 'alert_sent',
+  BROADCAST_SENT: 'broadcast_sent',
   STATUS_VIEWED: 'status_viewed',
   SUBSCRIBE_VIEWED: 'subscribe_viewed',
   // The two halves of the reminder funnel: how many nudges went out, and how

@@ -216,6 +216,15 @@ test/                 17 files, node:test, throwaway SQLite per file, all
   totalAvailable + truncated, and both send paths add a header line. The note
   is per request, never in the cached text - it depends on the window and the
   cached summary does not.
+* /broadcast is admin-only, two-step and absent from PUBLIC_COMMANDS. The
+  first message ONLY previews, with the real recipient list computed once and
+  kept - the count shown is the list messaged. Recipients exclude anyone who
+  ran /forgetme and has nothing left attached (a subscription counts as
+  something, on purpose). Pre-translated announcements go out per-recipient
+  language; free text says in the preview that it will not be. Throttled with
+  createSender, NOT BullMQ - case-10 already solved this in process, and a
+  queue would add Redis to a hand-triggered command and buy durability a
+  re-run would undo by double-sending.
 * Keyword alerts DM a user when a tracked group message matches one of their
   live keywords. Opt-in (users.alerts_enabled), off by default, premium-gated,
   one tap on the /filter keywords screen. NOT a queue job: the naive form is
