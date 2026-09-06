@@ -125,3 +125,43 @@ test('generateDigest treats different lookback windows as separate cache entries
 
   assert.equal(deepseekCallCount, before + 2, 'a different hours value must not reuse another window\'s cache entry');
 });
+
+test('a truncated window says so, and an untruncated one does not', async () => {
+  // getRecentMessages keeps the NEWEST 200 in the window. Before this, a
+  // summary of 200 out of 900 messages was presented exactly like a summary of
+  // the whole day — a wrong answer that looks like a right one.
+  const { MESSAGE_WINDOW_LIMIT } = db;
+  db.getOrCreateUser({ id: 106, username: 'busy', firstName: 'B' });
+  db.getOrCreateChat({ id: -106, title: 'Busy', type: 'group' });
+
+  for (let i = 1; i <= MESSAGE_WINDOW_LIMIT + 40; i++) {
+    db.saveMessage({ chatId: -106, messageId: i, userId: 106, username: 'busy', text: `message ${i}` });
+  }
+
+  const busy = await generateDigest(-106, 106, 24);
+  assert.equal(busy.messageCount, MESSAGE_WINDOW_LIMIT, 'only the cap is summarized');
+  assert.equal(busy.totalAvailable, MESSAGE_WINDOW_LIMIT + 40, 'but the caller is told what it missed');
+  assert.equal(busy.truncated, true);
+
+  db.getOrCreateUser({ id: 107, username: 'quiet', firstName: 'Q' });
+  db.getOrCreateChat({ id: -107, title: 'Quiet', type: 'group' });
+  db.saveMessage({ chatId: -107, messageId: 1, userId: 107, username: 'quiet', text: 'just the one' });
+
+  const quiet = await generateDigest(-107, 107, 24);
+  assert.equal(quiet.truncated, false, 'a window that fits is not flagged');
+  assert.equal(quiet.totalAvailable, 1);
+});
+
+test('the truncation note is per request, not baked into the cached summary', async () => {
+  // Same reasoning as the header and the footer: whether a window was cut
+  // depends on the window, and the cached text is shared across requesters.
+  db.getOrCreateUser({ id: 108, username: 'cached', firstName: 'C' });
+  db.getOrCreateChat({ id: -108, title: 'Cached', type: 'group' });
+  for (let i = 1; i <= 5; i++) {
+    db.saveMessage({ chatId: -108, messageId: i, userId: 108, username: 'cached', text: `line ${i}` });
+  }
+
+  const result = await generateDigest(-108, 108, 24);
+  assert.doesNotMatch(result.summaryText, /of \d+ messages/, 'the note is never inside the cached text');
+  assert.equal(typeof result.truncated, 'boolean', 'it is reported as data for the caller to render');
+});

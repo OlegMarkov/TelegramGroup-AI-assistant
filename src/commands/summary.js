@@ -124,7 +124,17 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
   // the cached text would be shared across every requester and every window.
   // Groups only — a channel summary has no members to tell.
   const footer = result.isChannel ? '' : `\n\n${t(lang, 'summary.footer')}`;
-  const body = `${t(lang, 'summary.header', { hours })}\n\n${result.summaryText}${result.highlightBlock}${footer}`;
+
+  // Assembled here rather than cached, exactly like the header and the footer:
+  // whether the window was truncated depends on the window, and the cached
+  // summary text is shared across every requester who asks for it.
+  const truncatedNote = result.truncated
+    ? `\n${t(lang, 'summary.truncatedNote', { shown: result.messageCount, total: result.totalAvailable })}`
+    : '';
+
+  const body =
+    `${t(lang, 'summary.header', { hours })}${truncatedNote}\n\n` +
+    `${result.summaryText}${result.highlightBlock}${footer}`;
 
   let sent;
   for (const part of splitForTelegram(body)) {

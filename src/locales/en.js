@@ -148,6 +148,9 @@ module.exports = {
       'This resets at 00:00 UTC. Everything else — /find, /filter, /channels — still works.',
     noActivity: 'No activity in the last {hours}h to summarize.',
     header: '📝 *Summary — last {hours}h*',
+    // A busy window is summarized from its most recent messages only. Without
+    // this the result looks exactly like a summary of the whole period.
+    truncatedNote: '_Busy window — this covers the most recent {shown} of {total} messages._',
     pickChat: 'Which chat do you want summarized?',
     hiddenGroupsNote:
       "ℹ️ You're active in {total} groups, but the free plan only works in {allowed}. " +

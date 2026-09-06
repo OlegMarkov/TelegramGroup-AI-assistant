@@ -726,7 +726,27 @@ function saveMessage({ chatId, messageId, userId, username, text, createdAt, isC
  * id breaks the tie because created_at is stored to the second and a busy
  * group puts many messages in one.
  */
-function getRecentMessages(chatId, { hours = 24, limit = 200 } = {}) {
+/**
+ * The most messages one summary is built from.
+ *
+ * Left at 200 deliberately rather than raised. Each message contributes up to
+ * GROUP_MESSAGE_CHARS (300) to the transcript, and Russian tokenizes at roughly
+ * 1.3 characters per token — so a full window is already on the order of tens
+ * of thousands of prompt tokens, and raising the cap raises that in direct
+ * proportion on every summary of a busy chat.
+ *
+ * The honest reason not to move it yet is that nobody has measured what a
+ * summary actually costs. That is no longer hard: ai_usage now records
+ * prompt_tokens per day and /spend reports them, so a week of real traffic
+ * gives a real number to decide against. Raise it then, with evidence, rather
+ * than now on the strength of it feeling low.
+ *
+ * Until then the cap is at least no longer silent — generateDigest reports
+ * whether a window was cut, and the summary header says so.
+ */
+const MESSAGE_WINDOW_LIMIT = 200;
+
+function getRecentMessages(chatId, { hours = 24, limit = MESSAGE_WINDOW_LIMIT } = {}) {
   return db
     .prepare(
       `SELECT * FROM (
@@ -737,6 +757,19 @@ function getRecentMessages(chatId, { hours = 24, limit = 200 } = {}) {
        ) ORDER BY created_at ASC, id ASC`
     )
     .all(chatId, `-${hours} hours`, limit);
+}
+
+/**
+ * How many messages are in the window before the cap is applied.
+ *
+ * A separate COUNT rather than dropping the LIMIT: the point is to know the
+ * size of what was cut, not to load it. Only meaningful next to
+ * getRecentMessages, which is why it takes the same shape of argument.
+ */
+function countRecentMessages(chatId, { hours = 24 } = {}) {
+  return db
+    .prepare(`SELECT COUNT(*) AS total FROM messages WHERE chat_id = ? AND created_at >= datetime('now', ?)`)
+    .get(chatId, `-${hours} hours`).total;
 }
 
 /**
@@ -1310,6 +1343,8 @@ module.exports = {
   isUserLinkedToChat,
   saveMessage,
   getRecentMessages,
+  countRecentMessages,
+  MESSAGE_WINDOW_LIMIT,
   searchMessages,
   getSummaryUsageToday,
   incrementSummaryUsage,

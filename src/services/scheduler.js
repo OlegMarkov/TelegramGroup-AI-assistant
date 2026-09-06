@@ -75,8 +75,11 @@ async function runDueDigests({ sleep } = {}) {
       // Same footer as the on-demand path, assembled per request rather than
       // cached, and only for groups.
       const footer = result.isChannel ? '' : `\n\n${t(lang, 'summary.footer')}`;
+      const truncatedNote = result.truncated
+        ? `\n${t(lang, 'summary.truncatedNote', { shown: result.messageCount, total: result.totalAvailable })}`
+        : '';
       const body =
-        `${t(lang, 'digest.dailyHeader', { chat: entry.chat_title })}\n\n` +
+        `${t(lang, 'digest.dailyHeader', { chat: entry.chat_title })}${truncatedNote}\n\n` +
         `${result.summaryText}${result.highlightBlock}${footer}`;
 
       for (const part of splitForTelegram(body)) {

@@ -1,5 +1,6 @@
 const {
   getRecentMessages,
+  countRecentMessages,
   getUserFilters,
   getActiveSubscription,
   getChatById,
@@ -40,17 +41,24 @@ async function loadWindow(chat, hours) {
     return {
       isChannel: true,
       items: posts.map((p) => ({ id: p.id, author: null, text: p.text })),
+      // Channel posts are fetched live and not capped, so nothing is hidden.
+      totalAvailable: posts.length,
     };
   }
 
+  const items = getRecentMessages(chat.id, { hours });
+
   return {
     isChannel: false,
-    items: getRecentMessages(chat.id, { hours }).map((m) => ({
+    items: items.map((m) => ({
       id: m.id,
       author: m.username || null,
       text: m.text,
       isCaption: Boolean(m.is_caption),
     })),
+    // Counted separately, because getRecentMessages returns the capped set and
+    // the whole point is to know how much did not fit.
+    totalAvailable: countRecentMessages(chat.id, { hours }),
   };
 }
 
@@ -87,7 +95,7 @@ function buildTranscript(items, isChannel) {
 
 async function generateDigest(chatId, userId, hours, lang = DEFAULT_LANGUAGE) {
   const chat = getChatById(chatId);
-  const { items, isChannel } = await loadWindow(chat || { id: chatId }, hours);
+  const { items, isChannel, totalAvailable } = await loadWindow(chat || { id: chatId }, hours);
   if (items.length === 0) return null;
 
   const fingerprint = fingerprintMessages(items);
@@ -138,6 +146,13 @@ async function generateDigest(chatId, userId, hours, lang = DEFAULT_LANGUAGE) {
     summaryText: normalizeModelMarkdown(summaryText),
     highlightBlock,
     messageCount: items.length,
+    totalAvailable,
+    // getRecentMessages keeps the NEWEST 200 in the window. Summarizing 200 of
+    // 900 messages and presenting it exactly like a summary of the whole day
+    // is a wrong answer that looks like a right one, so callers say so — in
+    // the header they assemble per request, never inside the cached text,
+    // because the note depends on the window and the cached summary does not.
+    truncated: totalAvailable > items.length,
     // So callers can add the "this bot is here" footer to a group summary and
     // not to a channel one, where there are no members to inform.
     isChannel,
