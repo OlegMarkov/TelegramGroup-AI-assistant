@@ -1363,6 +1363,19 @@ function resetAiUsageToday() {
   db.prepare('DELETE FROM ai_usage WHERE date = ?').run(utcDate());
 }
 
+/**
+ * Has this person ever had premium of any kind?
+ *
+ * Broader than "have they had a trial" on purpose. A trial is for somebody who
+ * has never had premium; handing one to a lapsed paying customer would be a
+ * discount for churning, and handing one to somebody who was comped would be a
+ * second gift. Any subscription row at all - trial, paid, comped, refunded or
+ * revoked - means they have already been through this door.
+ */
+function hasEverHadSubscription(userId) {
+  return Boolean(db.prepare('SELECT 1 FROM subscriptions WHERE user_id = ? LIMIT 1').get(userId));
+}
+
 function getSubscriptionByChargeId(telegramChargeId) {
   if (!telegramChargeId) return undefined;
   return db.prepare('SELECT * FROM subscriptions WHERE telegram_charge_id = ?').get(telegramChargeId);
@@ -1487,6 +1500,7 @@ module.exports = {
   getWeeklyCohorts,
   getDailyActiveUsers,
   createSubscription,
+  hasEverHadSubscription,
   setSubscriptionStatus,
   revokeActiveSubscriptions,
   getSubscriptionsDueForReminder,

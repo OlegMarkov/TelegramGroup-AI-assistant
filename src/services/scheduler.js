@@ -21,7 +21,7 @@ const { createSender, isBlockedError, isBadRequestError } = require('../utils/te
 const { SpendCapReachedError } = require('./aiBudget');
 const { feedbackKeyboard } = require('../commands/feedback');
 const { t, normalizeLanguage } = require('../utils/i18n');
-const { getLimits, FREE_LIMITS, PREMIUM_LIMITS } = require('../models/subscription');
+const { getLimits, FREE_LIMITS, PREMIUM_LIMITS, TRIAL_PLAN } = require('../models/subscription');
 const { planLabel } = require('../keyboards');
 const { generateDigest } = require('./digest');
 const { track, EVENTS } = require('./analytics');
@@ -197,7 +197,12 @@ const REMINDER_STAGES = [
 ];
 
 function reminderText(lang, stage, subscription) {
-  return t(lang, `reminder.${stage.stage}`, {
+  // A trial cannot be renewed, only bought, so it gets its own wording. The
+  // last day of a trial is the best moment there will ever be to ask for the
+  // sale, and "renew your trial" is not the sentence that does it.
+  const prefix = subscription.plan === TRIAL_PLAN ? 'reminder.trial_' : 'reminder.';
+
+  return t(lang, `${prefix}${stage.stage}`, {
     plan: planLabel(lang, subscription.plan),
     days: stage.days,
     expires: String(subscription.expires_at).slice(0, 10),

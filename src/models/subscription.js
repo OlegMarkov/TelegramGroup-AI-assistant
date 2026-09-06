@@ -73,6 +73,22 @@ const PREMIUM_LIMITS = {
   maxKeywords: MAX_KEYWORDS,
 };
 
+/**
+ * The free trial.
+ *
+ * The free plan is deliberately small - one group, one channel, one keyword,
+ * three summaries a day. That is enough to understand the bot but not enough to
+ * feel what premium is like, so the paywall arrives before the value does. A
+ * trial inverts that: people reach the wall having already used the thing they
+ * are being asked to pay for.
+ *
+ * 'trial' is deliberately NOT a member of SUBSCRIPTION_PLANS. pre_checkout
+ * validates a purchase against that map, and a trial is not purchasable -
+ * adding it there would make it buyable for zero stars.
+ */
+const TRIAL_PLAN = 'trial';
+const TRIAL_DAYS = 7;
+
 // How recently an expiry reminder counts as the reason someone renewed. Long
 // enough to cover "I will do it at the weekend", short enough not to claim
 // credit for a renewal that had nothing to do with it.
@@ -96,5 +112,7 @@ module.exports = {
   FREE_LIMITS,
   PREMIUM_LIMITS,
   RENEWAL_ATTRIBUTION_DAYS,
+  TRIAL_PLAN,
+  TRIAL_DAYS,
   getLimits,
 };

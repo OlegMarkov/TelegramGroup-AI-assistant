@@ -216,6 +216,13 @@ test/                 17 files, node:test, throwaway SQLite per file, all
   totalAvailable + truncated, and both send paths add a header line. The note
   is per request, never in the cached text - it depends on the window and the
   cached summary does not.
+* A first /start grants a 7-day trial: an ordinary subscription row, plan
+  'trial', stars_paid 0, NULL charge id, so it needs no special case and
+  lapses like any other. NOT in SUBSCRIPTION_PLANS - pre_checkout validates
+  against that map and it would become buyable for zero stars. Guarded on
+  having had ANY subscription ever, so a lapsed payer does not get a
+  churn discount. Reminders cover it with trial-specific wording (a trial
+  is bought, not renewed). /stats reports trial -> paid.
 * Summaries carry thumbs up/down on the LAST part only. Votes live in
   summary_feedback keyed on (user, chat, delivered message) - one vote per
   person on a shared group summary, and re-tapping changes it rather than

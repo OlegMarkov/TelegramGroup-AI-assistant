@@ -28,6 +28,16 @@ Everything except the admin commands is published to Telegram's "/" menu at star
 
 The user-facing copy lives entirely in [`src/locales/en.js`](src/locales/en.js) and [`src/locales/ru.js`](src/locales/ru.js). Every limit it quotes is interpolated from `FREE_LIMITS` / `PREMIUM_LIMITS` rather than typed into the sentence, so the instructions cannot drift from what the code actually allows. Tests in [`test/i18n.test.js`](test/i18n.test.js) hold the two locales to the same keys and placeholders, check that every command named in the greeting or the guide is one the bot really answers, and check that the guide still fits in a single Telegram message with balanced Markdown.
 
+## Free trial
+
+A first `/start` grants **7 days of premium**, once ever. It is written as an ordinary subscription row — plan `trial`, `stars_paid 0`, and a **NULL** charge id — so it flows through `getActiveSubscription` and `getLimits` with no special case anywhere else, and lapses by the same path a paid plan does.
+
+`trial` is deliberately **not** in `SUBSCRIPTION_PLANS`: pre-checkout validates a purchase against that map, so an entry there would make a week of premium buyable for zero stars.
+
+The guard is "has this person ever had **any** subscription", not "have they had a trial". Handing one to a lapsed paying customer would be a discount for churning, and handing one to somebody already comped would be a second gift.
+
+Expiry reminders cover trials — the last day is the best moment there will ever be to ask for the sale — but in their own words, since a trial cannot be renewed, only bought. `/stats` reports trial → paid alongside paywall → purchase.
+
 ## Free vs. premium
 
 | | Free | Premium |

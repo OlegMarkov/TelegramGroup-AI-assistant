@@ -40,6 +40,7 @@ const EVENTS = {
   // many renewals followed one closely enough to credit it.
   REMINDER_SENT: 'reminder_sent',
   RENEWED_AFTER_REMINDER: 'renewed_after_reminder',
+  TRIAL_STARTED: 'trial_started',
   SUBSCRIPTION_PURCHASED: 'subscription_purchased',
 };
 
@@ -78,6 +79,10 @@ function getFunnelReport(sinceDays) {
   const remindedUsers = getDistinctEventUsers([EVENTS.REMINDER_SENT], sinceDays);
   const renewedAfterReminder = remindedUsers.filter((id) => purchasedUsers.has(id)).length;
 
+  // Whether the trial pays for itself, measured the same way as the paywall.
+  const trialUsers = getDistinctEventUsers([EVENTS.TRIAL_STARTED], sinceDays);
+  const convertedFromTrial = trialUsers.filter((id) => purchasedUsers.has(id)).length;
+
   return {
     counts,
     paywallHitUsers: paywallUsers.length,
@@ -85,6 +90,8 @@ function getFunnelReport(sinceDays) {
     totalPurchasers: purchasedUsers.size,
     remindedUsers: remindedUsers.length,
     renewedAfterReminder,
+    trialUsers: trialUsers.length,
+    convertedFromTrial,
   };
 }
 

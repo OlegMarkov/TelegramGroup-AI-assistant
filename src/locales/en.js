@@ -45,6 +45,12 @@ module.exports = {
   },
 
   start: {
+    // Appended to the greeting only when a trial was actually granted, so the
+    // sentence is never a promise to somebody who did not get one.
+    trialGranted:
+      '🎁 *Your {days}-day free trial has started.* Unlimited summaries, longer lookback, ' +
+      'more channels and keywords, and daily digests — all switched on right now. ' +
+      'Nothing to pay and nothing to cancel: when it ends you simply drop back to the free plan.',
     greeting:
       "👋 Hi {name}! I'm your AI assistant for busy chats — I read them so you don't have to.\n\n" +
       '*Two ways to start*\n' +
@@ -60,7 +66,7 @@ module.exports = {
       '📅 /digest — premium: a summary by DM every day, at an hour you pick\n' +
       '⭐ /subscribe — unlimited summaries, longer lookback, daily digests\n\n' +
       'ℹ️ /help for the full guide, 🔒 /privacy for what I store.\n' +
-      'Or just tap the buttons below.',
+      'Or just tap the buttons below.{trialNote}',
   },
 
   help: {
@@ -336,6 +342,7 @@ module.exports = {
     planMonthly: 'Monthly',
     planYearly: 'Yearly',
     planComp: 'Complimentary',
+    planTrial: 'Free trial',
     invoiceTitle: '{label} subscription',
     invoiceDescription: 'Unlock premium features for {days} days.',
     thanks: '✅ Thanks! Your {label} subscription is now active until {expires} UTC.',
@@ -363,6 +370,20 @@ module.exports = {
       'Nothing was deleted — your groups, channels and keywords are all still there, ' +
       'waiting. Renew and they light up again.',
     renewButton: '⭐ Renew',
+    // A trial cannot be renewed, only bought. Same three stages, different ask.
+    trial_expiring_3d:
+      '⭐ Your free trial has {days} days left, until {expires}.\n\n' +
+      'Everything you have set up keeps working if you subscribe: unlimited summaries, ' +
+      '{premiumChannels} channels, and your daily digest.',
+    trial_expiring_1d:
+      '⏳ Your free trial ends tomorrow, on {expires}.\n\n' +
+      'Subscribe to keep unlimited summaries, {premiumChannels} channels and daily digests. ' +
+      'Nothing you have set up is lost either way.',
+    trial_expired:
+      '🔕 Your free trial ended on {expires}, so you are on the free plan now: ' +
+      '{freeSummaries} summaries a day, {freeGroups} group, {freeChannels} channel, ' +
+      '{freeKeywords} keyword.\n\n' +
+      'Nothing was deleted — everything you added is still there and comes back the moment you subscribe.',
   },
 
   moderation: {

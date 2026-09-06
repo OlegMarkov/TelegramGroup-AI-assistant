@@ -90,6 +90,11 @@ async function statsHandler(ctx) {
     funnel.remindedUsers > 0 ? ((funnel.renewedAfterReminder / funnel.remindedUsers) * 100).toFixed(1) : '0.0';
   sections.push(`🔔 *Reminder → renewal*: ${funnel.renewedAfterReminder}/${funnel.remindedUsers} (${reminderPct}%)`);
 
+  // The number that says whether giving premium away for a week earns it back.
+  const trialPct =
+    funnel.trialUsers > 0 ? ((funnel.convertedFromTrial / funnel.trialUsers) * 100).toFixed(1) : '0.0';
+  sections.push(`🎁 *Trial → paid*: ${funnel.convertedFromTrial}/${funnel.trialUsers} (${trialPct}%)`);
+
   // Whether the summaries are any good, which nothing measured before. Split
   // by language because the prompt is language-specific: an average across both
   // hides the thing worth seeing when a prompt change is being judged.
