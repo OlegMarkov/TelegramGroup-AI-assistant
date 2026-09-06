@@ -28,6 +28,9 @@ const { track, EVENTS } = require('../services/analytics');
  */
 const HOUR_OPTIONS = [9, 12, 18, 21];
 
+// strftime('%w') order, so the value stored is the value SQLite compares.
+const WEEKDAYS = [1, 2, 3, 4, 5, 6, 0];
+
 /** "18:00 UTC" when we do not know their clock, "21:00" when we do. */
 function formatHour(hourUtc, offsetMinutes) {
   return offsetMinutes === null ? `${String(hourUtc).padStart(2, '0')}:00 UTC` : formatLocalTime(hourUtc, offsetMinutes);
@@ -81,6 +84,26 @@ function digestMenu(lang, chatId, existing, offsetMinutes) {
     buttons.push([{ text: t(lang, 'digest.turnOff'), callback_data: `digest:off:${chatId}` }]);
   }
 
+  // Daily is the default and stays one tap away; weekly is for groups that are
+  // not busy every day, where a daily digest is either near-empty or switched
+  // off entirely.
+  const weekly = existing && existing.cadence === 'weekly';
+  buttons.push([
+    {
+      text: t(lang, weekly ? 'digest.switchToDaily' : 'digest.switchToWeekly'),
+      callback_data: `digest:cadence:${chatId}:${weekly ? 'daily' : 'weekly'}`,
+    },
+  ]);
+
+  if (weekly) {
+    buttons.push(
+      WEEKDAYS.map((day) => ({
+        text: `${existing.weekday === day ? '✅ ' : ''}${t(lang, `digest.weekday${day}`)}`,
+        callback_data: `digest:weekday:${chatId}:${day}`,
+      }))
+    );
+  }
+
   // Offered beside the times rather than in front of them. Asking first would
   // block somebody who just wants a digest at a UTC hour they already know,
   // and this is a convenience, not a required setting. Once it is answered the
@@ -119,7 +142,12 @@ async function showDigestMenu(ctx, chatId, chatTitle) {
       ? t(lang, 'digest.pickTime')
       : t(lang, 'digest.pickTimeLocal', { zone: formatOffset(offsetMinutes) });
 
-  return ctx.reply(`${statusLine}\n\n${prompt}`, {
+  const cadenceNote =
+    existing && existing.cadence === 'weekly'
+      ? `\n\n${t(lang, 'digest.weeklyNote', { day: t(lang, `digest.weekday${existing.weekday}`) })}`
+      : '';
+
+  return ctx.reply(`${statusLine}${cadenceNote}\n\n${prompt}`, {
     parse_mode: 'Markdown',
     reply_markup: digestMenu(lang, chatId, existing, offsetMinutes),
   });
@@ -209,6 +237,61 @@ async function digestTimezoneCallback(ctx) {
   return showDigestMenu(ctx, chatId, chatTitleFor(ctx, chatId));
 }
 
+/**
+ * Switching between daily and weekly, and choosing the day.
+ *
+ * Both keep hour_utc exactly as it is: the cadence decides which days the row
+ * is due on, never what time of day it fires.
+ */
+async function digestCadenceCallback(ctx) {
+  const lang = ctx.state.lang;
+  const chatId = Number(ctx.match[1]);
+  const cadence = ctx.match[2];
+
+  if (!isUserLinkedToChat(chatId, ctx.from.id)) {
+    return ctx.answerCbQuery(t(lang, 'common.notAuthorizedForChat'), { show_alert: true });
+  }
+
+  const existing = getScheduledDigest(chatId, ctx.from.id);
+  // Nothing to change the cadence of yet — pick a time first.
+  if (!existing) return ctx.answerCbQuery(t(lang, 'digest.pickTimeFirst'), { show_alert: true });
+
+  setScheduledDigest({
+    chatId,
+    userId: ctx.from.id,
+    hourUtc: existing.hour_utc,
+    cadence,
+    weekday: existing.weekday,
+  });
+
+  await ctx.answerCbQuery(t(lang, 'digest.saved'));
+  return showDigestMenu(ctx, chatId, chatTitleFor(ctx, chatId));
+}
+
+async function digestWeekdayCallback(ctx) {
+  const lang = ctx.state.lang;
+  const chatId = Number(ctx.match[1]);
+  const weekday = Number(ctx.match[2]);
+
+  if (!isUserLinkedToChat(chatId, ctx.from.id)) {
+    return ctx.answerCbQuery(t(lang, 'common.notAuthorizedForChat'), { show_alert: true });
+  }
+
+  const existing = getScheduledDigest(chatId, ctx.from.id);
+  if (!existing) return ctx.answerCbQuery(t(lang, 'digest.pickTimeFirst'), { show_alert: true });
+
+  setScheduledDigest({
+    chatId,
+    userId: ctx.from.id,
+    hourUtc: existing.hour_utc,
+    cadence: 'weekly',
+    weekday,
+  });
+
+  await ctx.answerCbQuery(t(lang, 'digest.saved'));
+  return showDigestMenu(ctx, chatId, chatTitleFor(ctx, chatId));
+}
+
 async function digestSetCallback(ctx) {
   const lang = ctx.state.lang;
   const chatId = Number(ctx.match[1]);
@@ -229,7 +312,16 @@ async function digestSetCallback(ctx) {
 
   // hour_utc, always. The offset decides what the button said, never what is
   // stored — the hourly tick compares this value against the current UTC hour.
-  setScheduledDigest({ chatId, userId: ctx.from.id, hourUtc: hour });
+  // Keeps whatever cadence is already set: this button changes the time, not
+  // how often.
+  const existing = getScheduledDigest(chatId, ctx.from.id);
+  setScheduledDigest({
+    chatId,
+    userId: ctx.from.id,
+    hourUtc: hour,
+    cadence: existing ? existing.cadence : 'daily',
+    weekday: existing ? existing.weekday : 1,
+  });
   track(EVENTS.DIGEST_CONFIGURED, { userId: ctx.from.id, chatId, metadata: { hourUtc: hour } });
 
   const offsetMinutes = getUserTimezoneOffset(ctx.from.id);
@@ -256,6 +348,8 @@ module.exports = (bot) => {
   bot.action(/^digest:chat:(-?\d+)$/, digestChatCallback);
   bot.action(/^digest:tzmenu:(-?\d+)$/, digestTimezoneMenuCallback);
   bot.action(/^digest:tz:(-?\d+):(-?\d+)$/, digestTimezoneCallback);
+  bot.action(/^digest:cadence:(-?\d+):(daily|weekly)$/, digestCadenceCallback);
+  bot.action(/^digest:weekday:(-?\d+):(\d)$/, digestWeekdayCallback);
   bot.action(/^digest:set:(-?\d+):(\d+)$/, digestSetCallback);
   bot.action(/^digest:off:(-?\d+)$/, digestOffCallback);
 };

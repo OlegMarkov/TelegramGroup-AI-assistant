@@ -28,6 +28,25 @@ const { track, EVENTS } = require('./analytics');
 const QUEUE_NAME = 'scheduler-jobs';
 const TICK_JOB_NAME = 'digest-tick';
 const DIGEST_LOOKBACK_HOURS = 24;
+const WEEKLY_LOOKBACK_HOURS = 24 * 7;
+
+/**
+ * A weekly digest is exempt from PREMIUM_LIMITS.maxLookbackHours (72).
+ *
+ * That cap exists to bound what a user can ask for on demand — it is a spend
+ * and abuse control on /summary, where anyone can type a number. A weekly
+ * digest is not a request, it is a schedule the user configured once, it fires
+ * at most once a week, and 168 hours IS the feature: clamping it to 72 would
+ * silently deliver a three-day digest under a "past week" heading, which is
+ * the same class of quiet wrongness as the 200-message cap.
+ *
+ * Raising the cap itself was the alternative and is worse: it would also raise
+ * what every on-demand /summary can pull, which is exactly what it is there to
+ * prevent. Exempting the one scheduled path keeps the control where it belongs.
+ */
+function lookbackFor(entry) {
+  return entry.cadence === 'weekly' ? WEEKLY_LOOKBACK_HOURS : DIGEST_LOOKBACK_HOURS;
+}
 
 const telegram = new Telegram(config.botToken);
 const schedulerQueue = new Queue(QUEUE_NAME, { connection });
@@ -63,7 +82,8 @@ async function runDueDigests({ sleep } = {}) {
 
     try {
       const lang = normalizeLanguage(getUserLanguage(entry.user_id));
-      const result = await generateDigest(entry.chat_id, entry.user_id, DIGEST_LOOKBACK_HOURS, lang);
+      const hours = lookbackFor(entry);
+      const result = await generateDigest(entry.chat_id, entry.user_id, hours, lang);
 
       if (!result) {
         // Nothing happened in the window. There is no digest to send, but the
@@ -78,9 +98,12 @@ async function runDueDigests({ sleep } = {}) {
       const truncatedNote = result.truncated
         ? `\n${t(lang, 'summary.truncatedNote', { shown: result.messageCount, total: result.totalAvailable })}`
         : '';
-      const body =
-        `${t(lang, 'digest.dailyHeader', { chat: entry.chat_title })}${truncatedNote}\n\n` +
-        `${result.summaryText}${result.highlightBlock}${footer}`;
+      const header =
+        entry.cadence === 'weekly'
+          ? t(lang, 'digest.weeklyHeader', { chat: entry.chat_title })
+          : t(lang, 'digest.dailyHeader', { chat: entry.chat_title });
+
+      const body = `${header}${truncatedNote}\n\n${result.summaryText}${result.highlightBlock}${footer}`;
 
       for (const part of splitForTelegram(body)) {
         await sender.send(async () => {

@@ -204,6 +204,18 @@ test/                 17 files, node:test, throwaway SQLite per file, all
   saveMessage; the chat link is still kept, because being unrecorded is not the
   same as being unable to use the bot. A paused chat refuses /summary rather
   than summarizing what is still stored.
+* Digests can be daily or WEEKLY. scheduled_digests.cadence + .weekday, both
+  defaulted so existing rows are untouched. getDueScheduledDigests matches a
+  weekly row only on its weekday via strftime('%w'); the per-hour last_sent_at
+  guard is unchanged. A weekly digest looks back 168h and is deliberately
+  EXEMPT from PREMIUM_LIMITS.maxLookbackHours (72) - that cap bounds on-demand
+  /summary, where the user types the number; raising it would loosen the wrong
+  thing. Every weekly digest is a fresh DeepSeek call, since the cache is keyed
+  on hours.
+* The 200-message cap is no longer silent: generateDigest reports
+  totalAvailable + truncated, and both send paths add a header line. The note
+  is per request, never in the cached text - it depends on the window and the
+  cached summary does not.
 * Keyword alerts DM a user when a tracked group message matches one of their
   live keywords. Opt-in (users.alerts_enabled), off by default, premium-gated,
   one tap on the /filter keywords screen. NOT a queue job: the naive form is
@@ -254,8 +266,9 @@ test/                 17 files, node:test, throwaway SQLite per file, all
    (Captions ARE ingested as of 2026-09-05.)
 2. /find uses LIKE '%q%' with no FTS index and no escaping of % / _ (the
    escaping IS done as of 2026-09-05; the FTS index is not).
-3. getRecentMessages caps at 200 messages with no note to the user when a
-   busier window is truncated.
+3. getRecentMessages caps at 200 messages. The user is now TOLD when a window
+   was cut (2026-09-06); whether 200 is the right number is still unmeasured -
+   /spend now reports prompt tokens, so decide with evidence.
 
 
 ## ENVIRONMENT / OPS QUICK REFERENCE

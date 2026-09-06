@@ -311,6 +311,18 @@ module.exports = {
     disabledShort: 'Disabled',
     disabled: '🔕 Daily digest disabled for this chat.',
     dailyHeader: '📅 *Daily digest — {chat}*',
+    weeklyHeader: '📅 *Weekly digest — {chat}*',
+    switchToWeekly: '📆 Switch to weekly',
+    switchToDaily: '📅 Switch back to daily',
+    weeklyNote: '📆 Weekly, every {day}. It covers the whole past week.',
+    pickTimeFirst: 'Pick a time first, then choose how often.',
+    weekday0: 'Sun',
+    weekday1: 'Mon',
+    weekday2: 'Tue',
+    weekday3: 'Wed',
+    weekday4: 'Thu',
+    weekday5: 'Fri',
+    weekday6: 'Sat',
   },
 
   subscribe: {
@@ -392,6 +404,7 @@ module.exports = {
     digestHeader: '*Daily digest*',
     digestNone: '🔕 Not set up — /digest to schedule one',
     digestOn: '🔔 *{chat}* at {time}',
+    digestOnWeekly: '🔔 *{chat}* — {day} at {time}, weekly',
     digestOff: '🔕 *{chat}* — off',
     // A digest the bot switched off itself. Without saying so, someone who
     // blocked and later unblocked the bot has no way to know why it stopped.

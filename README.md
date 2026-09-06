@@ -10,7 +10,7 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 - `/find <query>` — search a group's message history (or across all your linked groups, from DM)
 - `/filter` — pick topics, and add keywords of your own, that get highlighted as a separate "matches your filters" block in summaries. Topics are toggles and free for everyone; keywords are a second screen (1 on the free plan, 20 with premium) where ➕ takes a whole list in one message (one per line or comma separated, phrases included) and 🗑 removes whatever you tick. Keywords match as stems, so `release` also finds `releases`
 - `/channels` — follow public Telegram channels and summarize them alongside your groups (1 on the free plan, 20 with premium). The list is a keyboard: tap channels to select them, 🗑 removes the selection, ➕ asks for the next one by @name or link. `/addchannel` and `/removechannel` still take a handle directly.
-- `/digest` — premium: configure an automatic daily digest, delivered by DM at a chosen hour. Set a timezone once and all 24 hours are offered in your own clock; leave it unset and the original four UTC hours are still what you get
+- `/digest` — premium: configure an automatic **daily or weekly** digest, delivered by DM at a chosen hour. Set a timezone once and all 24 hours are offered in your own clock; leave it unset and the original four UTC hours are still what you get
 - `/subscribe` — buy a premium plan with Telegram Stars (native `XTR` payments, no external provider needed)
 - `/status` — your plan and expiry, summaries used today, and how many groups, channels and keywords are active against your allowance, with anything past it marked locked
 - `/language` — switch interface language (English / Русский)
@@ -44,6 +44,18 @@ Limits are defined in [`src/models/subscription.js`](src/models/subscription.js)
 **Keywords follow that rule too, and are enforced on the way out**: the earliest N a user added are the ones that match (`allowedKeywords` in [`src/models/filter.js`](src/models/filter.js)), applied in [`src/services/digest.js`](src/services/digest.js) at the single point where a stored filter becomes a matcher — a subscription that lapsed between adding a keyword and running a summary has to be noticed there, not at the screen where it was typed. The `/filter` screen marks the locked ones and keeps them tappable, since removing one is how you get back under the allowance. Topic categories are not gated at all.
 
 **Group-count limit specifics**: a free user's "first group" is whichever tracked group they were *first active in* (earliest `chat_members.joined_at`), not the first one they happen to run a command in. This only gates which chats a given user can personally query — **message ingestion keeps tracking every group the bot is in for every member, regardless of any individual member's plan**, since the group may belong to other, possibly premium, members who still need it working.
+
+## Weekly digests, and the message cap
+
+A digest can be **daily** or **weekly**. Weekly rows carry a weekday and are matched only on it, by `strftime('%w')` inside `getDueScheduledDigests` — the per-hour `last_sent_at` guard is unchanged, so a retried tick still cannot double-send. Both columns are added with `addColumnIfMissing` and default to daily, so every existing row behaves exactly as before with no backfill.
+
+A weekly digest looks back **168 hours** and is deliberately **exempt** from `PREMIUM_LIMITS.maxLookbackHours` (72). That cap is a spend and abuse control on `/summary`, where anyone can type a number; a weekly digest is a schedule configured once that fires at most weekly, and a week *is* the feature — clamping it would deliver three days under a "past week" heading. Raising the cap instead would also raise what every on-demand summary can pull, which is what it exists to prevent.
+
+**The 200-message cap is no longer silent.** `generateDigest` reports `totalAvailable` and `truncated`, and both the on-demand and scheduled paths add a line to the header saying the summary covers the most recent N of M. The note is assembled per request and never enters the cached summary text — whether a window was cut depends on the window, and the cached text is shared. Weekly digests make this fire routinely, which is why it landed first.
+
+The cap itself stays at 200 until there is a measurement to move it against: `ai_usage` now records `prompt_tokens` and `/spend` reports them, so a week of real traffic gives a real number.
+
+Note that a 168-hour cache entry cannot collide with a 24-hour one — the digest cache is keyed by `(chat_id, hours, language)` — so **every weekly digest is a fresh DeepSeek call**. That is correct, and worth knowing when reading `/spend`.
 
 ## Keyword alerts
 

@@ -224,6 +224,14 @@ addColumnIfMissing('users', 'tz_offset_minutes', 'INTEGER');
 // is the flag that decides whether the bot messages somebody unprompted.
 addColumnIfMissing('users', 'alerts_enabled', 'INTEGER NOT NULL DEFAULT 0');
 
+// 'daily' or 'weekly'. Defaulted so every existing row keeps behaving exactly
+// as it did, without a backfill.
+addColumnIfMissing('scheduled_digests', 'cadence', `TEXT NOT NULL DEFAULT 'daily'`);
+
+// Which day a weekly digest lands on, as SQLite's strftime('%w'): 0 = Sunday.
+// Ignored entirely for a daily row.
+addColumnIfMissing('scheduled_digests', 'weekday', 'INTEGER NOT NULL DEFAULT 1');
+
 // One row per channel, no matter how many users follow it. Handles are stored
 // lowercased so @Durov and @durov cannot become two chats holding two copies
 // of the same content.
@@ -830,12 +838,17 @@ function getScheduledDigest(chatId, userId) {
   return db.prepare('SELECT * FROM scheduled_digests WHERE chat_id = ? AND user_id = ?').get(chatId, userId);
 }
 
-function setScheduledDigest({ chatId, userId, hourUtc }) {
+function setScheduledDigest({ chatId, userId, hourUtc, cadence = 'daily', weekday = 1 }) {
   db.prepare(
-    `INSERT INTO scheduled_digests (chat_id, user_id, hour_utc, enabled)
-     VALUES (?, ?, ?, 1)
-     ON CONFLICT(chat_id, user_id) DO UPDATE SET hour_utc = excluded.hour_utc, enabled = 1, disabled_reason = NULL`
-  ).run(chatId, userId, hourUtc);
+    `INSERT INTO scheduled_digests (chat_id, user_id, hour_utc, enabled, cadence, weekday)
+     VALUES (?, ?, ?, 1, ?, ?)
+     ON CONFLICT(chat_id, user_id) DO UPDATE SET
+       hour_utc = excluded.hour_utc,
+       enabled = 1,
+       disabled_reason = NULL,
+       cadence = excluded.cadence,
+       weekday = excluded.weekday`
+  ).run(chatId, userId, hourUtc, cadence === 'weekly' ? 'weekly' : 'daily', Number(weekday) || 0);
 }
 
 /**
@@ -857,7 +870,7 @@ function disableScheduledDigest(chatId, userId, reason = null) {
 function getUserScheduledDigests(userId) {
   return db
     .prepare(
-      `SELECT sd.chat_id, sd.hour_utc, sd.enabled, sd.disabled_reason, c.title AS chat_title
+      `SELECT sd.chat_id, sd.hour_utc, sd.enabled, sd.disabled_reason, sd.cadence, sd.weekday, c.title AS chat_title
        FROM scheduled_digests sd
        JOIN chats c ON c.id = sd.chat_id
        WHERE sd.user_id = ? AND c.is_active = 1
@@ -879,10 +892,13 @@ function getUserScheduledDigests(userId) {
 function getDueScheduledDigests(hourUtc) {
   return db
     .prepare(
-      `SELECT sd.chat_id, sd.user_id, sd.hour_utc, c.title as chat_title
+      `SELECT sd.chat_id, sd.user_id, sd.hour_utc, sd.cadence, sd.weekday, c.title as chat_title
        FROM scheduled_digests sd
        JOIN chats c ON c.id = sd.chat_id
        WHERE sd.enabled = 1 AND sd.hour_utc = ? AND c.is_active = 1
+         -- A weekly row is only due on its own weekday. strftime('%w') is
+         -- 0-6 Sunday-first, and comes back as text, hence the cast.
+         AND (sd.cadence <> 'weekly' OR CAST(strftime('%w', 'now') AS INTEGER) = sd.weekday)
          AND (
            sd.last_sent_at IS NULL
            OR strftime('%Y-%m-%dT%H', sd.last_sent_at) <> strftime('%Y-%m-%dT%H', 'now')

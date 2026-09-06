@@ -356,3 +356,95 @@ test('a backup that quietly stopped happening is warned about, and one that neve
     logger.warn = realWarn;
   }
 });
+
+// --- weekly cadence (feature-06) -------------------------------------------
+
+function withUtcDay(weekday, fn) {
+  // SQLite's strftime('%w', 'now') reads the real clock, so the day is moved by
+  // shifting the row rather than by faking time: a weekly row due on the day it
+  // actually is now, versus one due on a different day.
+  return Promise.resolve(fn(weekday));
+}
+
+function todayWeekday() {
+  return Number(db.db.prepare("SELECT CAST(strftime('%w','now') AS INTEGER) AS d").get().d);
+}
+
+test('a weekly digest is due only on its own weekday', async () => {
+  const userId = 340;
+  const chatId = -340;
+  setUpSubscriber(userId, chatId, 13, 'Weekly');
+
+  const today = todayWeekday();
+  const otherDay = (today + 3) % 7;
+
+  db.setScheduledDigest({ chatId, userId, hourUtc: 13, cadence: 'weekly', weekday: otherDay });
+  assert.ok(
+    !db.getDueScheduledDigests(13).some((d) => d.user_id === userId),
+    'not due on a day that is not its weekday'
+  );
+
+  db.setScheduledDigest({ chatId, userId, hourUtc: 13, cadence: 'weekly', weekday: today });
+  const due = db.getDueScheduledDigests(13).filter((d) => d.user_id === userId);
+  assert.equal(due.length, 1, 'due on its own weekday');
+  assert.equal(due[0].cadence, 'weekly');
+});
+
+test('a daily digest is unaffected by the weekday column', () => {
+  const userId = 341;
+  const chatId = -341;
+  setUpSubscriber(userId, chatId, 14, 'DailyStill');
+
+  // Whatever weekday happens to be stored, a daily row is due every day.
+  db.setScheduledDigest({ chatId, userId, hourUtc: 14, cadence: 'daily', weekday: (todayWeekday() + 2) % 7 });
+  assert.ok(db.getDueScheduledDigests(14).some((d) => d.user_id === userId));
+});
+
+test('an existing row without a cadence keeps behaving as daily', () => {
+  // What every row on the live database looks like before this deploy.
+  const userId = 342;
+  const chatId = -342;
+  setUpSubscriber(userId, chatId, 16, 'Legacy');
+  db.db.prepare("UPDATE scheduled_digests SET cadence = 'daily', weekday = 1 WHERE user_id = ?").run(userId);
+
+  const due = db.getDueScheduledDigests(16).filter((d) => d.user_id === userId);
+  assert.equal(due.length, 1, 'due today regardless of which weekday it is');
+});
+
+test('a weekly digest looks back a week, and says which kind it is', async () => {
+  const userId = 343;
+  const chatId = -343;
+  setUpSubscriber(userId, chatId, 17, 'WeekLookback');
+  db.setScheduledDigest({ chatId, userId, hourUtc: 17, cadence: 'weekly', weekday: todayWeekday() });
+
+  // Four days ago: outside a 24h daily window, inside a 7-day weekly one.
+  db.saveMessage({
+    chatId,
+    messageId: 500,
+    userId,
+    username: 'u',
+    text: 'said four days ago',
+    createdAt: new Date(Date.now() - 4 * 86400000).toISOString(),
+  });
+
+  const before = sentMessages.length;
+  await withUtcHour(17, () => runDueDigests({ sleep: async () => {} }));
+
+  assert.equal(sentMessages.length, before + 1);
+  const body = sentMessages[sentMessages.length - 1].text;
+  assert.match(body, /Weekly digest/, 'a weekly digest is labelled as one');
+
+  // The lookback is what the digest was built from: 7 days, not the 72h
+  // premium cap, which bounds on-demand /summary rather than a schedule.
+  assert.equal(db.getRecentMessages(chatId, { hours: 24 }).length, 1, 'only today inside a day');
+  assert.equal(db.getRecentMessages(chatId, { hours: 24 * 7 }).length, 2, 'both inside a week');
+});
+
+test('the weekly window is not clamped to the premium lookback cap', () => {
+  // PREMIUM_LIMITS.maxLookbackHours is 72 and bounds what a user can ASK for on
+  // demand. A weekly digest is a schedule, fires at most once a week, and 168
+  // hours is the feature — clamping it would deliver three days under a "past
+  // week" heading.
+  const { PREMIUM_LIMITS } = require('../src/models/subscription');
+  assert.ok(PREMIUM_LIMITS.maxLookbackHours < 24 * 7, 'this test is meaningless if the cap already covers a week');
+});

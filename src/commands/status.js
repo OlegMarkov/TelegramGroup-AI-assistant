@@ -132,7 +132,15 @@ function buildStatus(ctx) {
       const chat = escapeMarkdown(digest.chat_title || t(lang, 'common.chatFallback', { id: digest.chat_id }));
 
       if (digest.enabled) {
-        lines.push(t(lang, 'status.digestOn', { chat, time: formatHour(digest.hour_utc, offsetMinutes) }));
+        lines.push(
+          digest.cadence === 'weekly'
+            ? t(lang, 'status.digestOnWeekly', {
+                chat,
+                time: formatHour(digest.hour_utc, offsetMinutes),
+                day: t(lang, `digest.weekday${digest.weekday}`),
+              })
+            : t(lang, 'status.digestOn', { chat, time: formatHour(digest.hour_utc, offsetMinutes) })
+        );
       } else if (digest.disabled_reason === 'blocked') {
         // Otherwise this is indistinguishable from having turned it off
         // themselves, and there is nothing to tell them it can be undone.
