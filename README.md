@@ -21,6 +21,7 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 - `/refund <charge_id>` — admin-only: refund a Stars payment and mark that subscription refunded
 - `/grant <user_id> <days>` — admin-only: comp someone a subscription
 - `/revoke <user_id>` — admin-only: take back every active subscription a user has
+- `/spend` — admin-only: today's DeepSeek usage against the daily cap; `/spend allow <n>` adds room for today, `/spend reset` zeroes the counter
 
 Everything except the admin commands is published to Telegram's "/" menu at startup by `publishCommandMenu()` in [`src/bot.js`](src/bot.js), in each supported language, with descriptions from the `commands.*` translations. `/stats`, `/refund`, `/grant` and `/revoke` are left out on purpose, and reply with nothing at all to a non-admin: not advertising them is what keeps their existence undiscoverable.
 
@@ -43,6 +44,18 @@ Limits are defined in [`src/models/subscription.js`](src/models/subscription.js)
 **Keywords follow that rule too, and are enforced on the way out**: the earliest N a user added are the ones that match (`allowedKeywords` in [`src/models/filter.js`](src/models/filter.js)), applied in [`src/services/digest.js`](src/services/digest.js) at the single point where a stored filter becomes a matcher — a subscription that lapsed between adding a keyword and running a summary has to be noticed there, not at the screen where it was typed. The `/filter` screen marks the locked ones and keeps them tappable, since removing one is how you get back under the allowance. Topic categories are not gated at all.
 
 **Group-count limit specifics**: a free user's "first group" is whichever tracked group they were *first active in* (earliest `chat_members.joined_at`), not the first one they happen to run a command in. This only gates which chats a given user can personally query — **message ingestion keeps tracking every group the bot is in for every member, regardless of any individual member's plan**, since the group may belong to other, possibly premium, members who still need it working.
+
+## Spend cap
+
+Per-user limits bound what one person can do; `DEEPSEEK_DAILY_WARN_COMPLETIONS` and `DEEPSEEK_DAILY_MAX_COMPLETIONS` bound the **total**. Both optional and both off by default — a cap nobody has chosen is worse than no cap, because it stops the product working at an arbitrary number.
+
+Counted per UTC day in `ai_usage`, keyed by date like `daily_usage`, so it resets at midnight with no job to run. Enforced in `chatCompletion` **before** the request, since the point is not to spend the money, and that is the one choke point every AI call passes through. The warning DMs admins once a day rather than once a call.
+
+Hitting the cap makes `/summary` answer honestly (and not consume the user's daily allowance), and makes the scheduler skip a digest without marking the hour done, so the next tick can still deliver it. `/spend allow <n>` grants room for **today only**.
+
+Counted in completions rather than tokens because that is the unit an operator can reason about; tokens are recorded and reported so the two can be calibrated against each other.
+
+**The test suite cannot reach the real API.** Under `NODE_ENV=test` the DeepSeek base URL points at a closed port, so an un-stubbed call fails fast instead of quietly succeeding against the developer `.env` in the repo root. Tests that mean to exercise that path stub the exported `client.post`; patching axios's prototype does **not** work, because `axios.create()` binds its methods.
 
 ## Timezones
 
