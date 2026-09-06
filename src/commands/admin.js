@@ -7,6 +7,7 @@ const {
   createSubscription,
   getActiveSubscription,
 } = require('../services/database');
+const { describeBudget, addExtraAllowance, resetToday } = require('../services/aiBudget');
 const { formatDate } = require('../utils/formatters');
 const logger = require('../utils/logger');
 
@@ -124,11 +125,53 @@ async function revokeHandler(ctx) {
   );
 }
 
+function renderBudget() {
+  const budget = describeBudget();
+  const cap = budget.hardLimit === null ? 'no hard cap' : `${budget.completions}/${budget.hardLimit}`;
+  const warn = budget.warnAt === null ? 'no warning set' : `warns at ${budget.warnAt}`;
+
+  return (
+    `DeepSeek today: ${budget.completions} completions (${cap}, ${warn}).\n` +
+    `Tokens: ${budget.promptTokens} in, ${budget.completionTokens} out.` +
+    (budget.extraAllowance ? `\nAdmin added ${budget.extraAllowance} for today.` : '') +
+    (budget.blocked ? '\n\n⛔ Calls are BLOCKED until 00:00 UTC or /spend allow <n>.' : '')
+  );
+}
+
+async function spendHandler(ctx) {
+  if (!isAdmin(ctx.from.id)) return;
+
+  const [action, amountRaw] = args(ctx);
+
+  if (!action) return ctx.reply(renderBudget());
+
+  if (action === 'reset') {
+    resetToday();
+    logger.info('AI spend counter reset', { adminId: ctx.from.id });
+    return ctx.reply(`Reset today's counter.\n\n${renderBudget()}`);
+  }
+
+  if (action === 'allow') {
+    const extra = Number(amountRaw);
+    if (!Number.isInteger(extra) || extra <= 0) return ctx.reply('Usage: /spend allow <completions>');
+
+    // Added to today only, deliberately. A legitimate spike should not quietly
+    // become a permanently higher ceiling that nobody remembers agreeing to;
+    // if it keeps happening, raise DEEPSEEK_DAILY_MAX_COMPLETIONS on purpose.
+    addExtraAllowance(extra);
+    logger.info('AI spend allowance raised for the day', { adminId: ctx.from.id, extra });
+    return ctx.reply(`Added ${extra} completions for today.\n\n${renderBudget()}`);
+  }
+
+  return ctx.reply('Usage: /spend | /spend reset | /spend allow <completions>');
+}
+
 module.exports = (bot) => {
   // None of these are in PUBLIC_COMMANDS, so they never appear in the "/" menu.
   bot.command('refund', refundHandler);
   bot.command('grant', grantHandler);
   bot.command('revoke', revokeHandler);
+  bot.command('spend', spendHandler);
 };
 
 module.exports.COMP_PLAN = COMP_PLAN;

@@ -1,9 +1,26 @@
 const axios = require('axios');
 const config = require('../config');
 const logger = require('../utils/logger');
+const { assertWithinBudget, recordCompletion } = require('./aiBudget');
+
+/**
+ * Under test, point at a guaranteed-closed port instead of the real API.
+ *
+ * The suite is meant to need no secrets and no network, but a developer .env
+ * sits in the repo root and dotenv loads it, so a test whose stub quietly fails
+ * to bind reaches production DeepSeek and spends real money against a real key.
+ * That is not hypothetical — it happened while the spend cap was being written,
+ * and the only symptom was a test that took 1.3 seconds and came back with a
+ * suspiciously good summary.
+ *
+ * Failing fast on a closed port turns that silent success into an obvious
+ * error, which is the right way round. Tests that mean to exercise this path
+ * stub `client.post` directly.
+ */
+const baseURL = config.env === 'test' ? 'http://127.0.0.1:1' : config.deepseek.baseUrl;
 
 const client = axios.create({
-  baseURL: config.deepseek.baseUrl,
+  baseURL,
   headers: {
     Authorization: `Bearer ${config.deepseek.apiKey}`,
     'Content-Type': 'application/json',
@@ -41,6 +58,11 @@ const MAX_BULLETS = 12;
 const THINKING_DISABLED = { type: 'disabled' };
 
 async function chatCompletion(messages, { temperature = 0.5, maxTokens = DEFAULT_MAX_TOKENS } = {}) {
+  // Before the request, because the point of a spend cap is not to spend the
+  // money. Every AI call in the product goes through here, so this is the one
+  // place it has to be.
+  assertWithinBudget();
+
   let data;
   try {
     ({ data } = await client.post('/chat/completions', {
@@ -64,6 +86,14 @@ async function chatCompletion(messages, { temperature = 0.5, maxTokens = DEFAULT
     });
     throw new Error('Failed to get a response from DeepSeek');
   }
+
+  // Booked whatever the response turns out to say: DeepSeek charges for a
+  // completion that came back empty or truncated just the same, so counting
+  // only the usable ones would under-report exactly when things go wrong.
+  recordCompletion({
+    promptTokens: data && data.usage && data.usage.prompt_tokens,
+    completionTokens: data && data.usage && data.usage.completion_tokens,
+  });
 
   // Validated outside the catch above, so a bad *response* is not reported as
   // a failed *request*.
@@ -143,4 +173,9 @@ async function summarize(text, { language = 'the same language as the input' } =
   ]);
 }
 
-module.exports = { chatCompletion, summarize, fence, readCompletion };
+// `client` is exported purely as a test seam. axios.create() returns an
+// instance with bound methods, so patching axios's prototype after the fact
+// does NOT intercept it — a stub that silently fails to bind means the suite
+// calls the real API and spends real money. That is not hypothetical; it
+// happened while this file was being written.
+module.exports = { chatCompletion, summarize, fence, readCompletion, client };

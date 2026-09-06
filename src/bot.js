@@ -11,6 +11,7 @@ const ingestion = require('./middleware/ingestion');
 const { handlePreCheckoutQuery, handleSuccessfulPayment } = require('./services/payments');
 const { startWorker } = require('./services/queue');
 const { startScheduler, startRetentionSweeps } = require('./services/scheduler');
+const { setAdminNotifier } = require('./services/aiBudget');
 const { getOrCreateChat, linkUserToChat, deactivateChat, claimJoinNotice } = require('./services/database');
 const { isGroupChat } = require('./utils/formatters');
 const { t, DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, PUBLIC_COMMANDS } = require('./utils/i18n');
@@ -162,6 +163,17 @@ function isPollingAlive() {
 }
 
 async function main() {
+  // aiBudget deliberately knows nothing about Telegram — deepseek.js imports it,
+  // and dragging a bot client in there would put one into every test that stubs
+  // a summary. It gets a way to reach the operator here instead, once.
+  setAdminNotifier(async (text) => {
+    for (const adminId of config.adminUserIds) {
+      await bot.telegram.sendMessage(adminId, text).catch((error) =>
+        logger.warn('Could not DM an admin the spend warning', { adminId, error: error.message })
+      );
+    }
+  });
+
   const worker = startWorker();
   const schedulerWorker = startScheduler();
   // Deliberately not part of the scheduler: retention is a promise made in

@@ -13,6 +13,7 @@ const {
 const { generateDigest } = require('../services/digest');
 const { isChatPaused } = require('../services/ingestionPolicy');
 const { ChannelUnavailableError } = require('../services/channelSource');
+const { SpendCapReachedError } = require('../services/aiBudget');
 const { getLimits, PREMIUM_LIMITS } = require('../models/subscription');
 const { isGroupChat, splitForTelegram } = require('../utils/formatters');
 const { startTyping } = require('../utils/typing');
@@ -92,6 +93,19 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
     // A channel that went private or was renamed since it was added.
     if (error instanceof ChannelUnavailableError) {
       return ctx.reply(t(lang, 'channel.unavailable', { handle: chat.username }), { parse_mode: 'Markdown' });
+    }
+
+    // We chose not to make this call. Say so plainly rather than reporting a
+    // failure that sounds like the bot is broken — and do not charge the user
+    // a daily allowance for a summary they did not get.
+    if (error instanceof SpendCapReachedError) {
+      logger.warn('Refused a summary: daily AI budget reached', {
+        userId: requesterId,
+        chatId,
+        usage: error.usage,
+        limit: error.limit,
+      });
+      return ctx.reply(t(lang, 'summary.budgetReached'));
     }
     logger.error('Summary generation failed', { error: error.message });
     return ctx.reply(t(lang, 'summary.failed'));

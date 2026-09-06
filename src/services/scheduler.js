@@ -18,6 +18,7 @@ const {
 } = require('./database');
 const { splitForTelegram } = require('../utils/formatters');
 const { createSender, isBlockedError, isBadRequestError } = require('../utils/telegramSend');
+const { SpendCapReachedError } = require('./aiBudget');
 const { t, normalizeLanguage } = require('../utils/i18n');
 const { getLimits, FREE_LIMITS, PREMIUM_LIMITS } = require('../models/subscription');
 const { planLabel } = require('../keyboards');
@@ -107,6 +108,20 @@ async function runDueDigests({ sleep } = {}) {
       // per-hour guard would suppress the retry this failure should get.
       markDigestSent(entry.chat_id, entry.user_id);
     } catch (error) {
+      // The daily AI budget is spent. Skip without marking the hour done, so
+      // the next tick can deliver it if an admin adds room — and without
+      // retrying inside this tick, which would just hit the same wall for
+      // every remaining recipient.
+      if (error instanceof SpendCapReachedError) {
+        logger.warn('Skipping a scheduled digest: daily AI budget reached', {
+          chatId: entry.chat_id,
+          userId: entry.user_id,
+          usage: error.usage,
+          limit: error.limit,
+        });
+        continue;
+      }
+
       // A user who blocked the bot returns 403 on every send, for ever. Their
       // digest stayed enabled, so the tick tried again the next day and every
       // day after — invisible noise that grows with every user who leaves.

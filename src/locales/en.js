@@ -141,6 +141,11 @@ module.exports = {
     capNoteFree: ' (capped to {hours}h on the free plan — /subscribe for up to {maxHours}h)',
     working: '⏳ Looking at the last {hours}h of activity...{capNote}',
     failed: 'Sorry, I could not generate a summary right now. Please try again shortly.',
+    // An honest refusal. Not a stack trace, and not a blank summary under a
+    // confident header — we chose not to make this call.
+    budgetReached:
+      "🛑 I've hit my daily limit for writing summaries, so I'm not making any more today.\n\n" +
+      'This resets at 00:00 UTC. Everything else — /find, /filter, /channels — still works.',
     noActivity: 'No activity in the last {hours}h to summarize.',
     header: '📝 *Summary — last {hours}h*',
     pickChat: 'Which chat do you want summarized?',

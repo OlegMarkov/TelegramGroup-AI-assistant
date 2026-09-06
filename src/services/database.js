@@ -139,6 +139,20 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_subscription_reminders_user ON subscription_reminders(user_id, sent_at);
 
+  -- What the AI cost us today. Keyed by UTC date, the same way daily_usage is,
+  -- so it rolls over at 00:00 UTC with no job to run and nothing to reset.
+  CREATE TABLE IF NOT EXISTS ai_usage (
+    date TEXT PRIMARY KEY,
+    completions INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    -- Room an admin granted for the rest of today, on top of the configured
+    -- cap. Per-day, so a legitimate spike does not silently raise the ceiling
+    -- for ever.
+    extra_allowance INTEGER NOT NULL DEFAULT 0,
+    warned_at TEXT
+  );
+
   -- Operational bookkeeping the bot needs to remember across restarts. Not
   -- product data and never user data: nothing in here is subject to retention
   -- or /forgetme, which is why it is a table of its own rather than an event.
@@ -1105,6 +1119,55 @@ function revokeActiveSubscriptions(userId) {
   return Number(result.changes);
 }
 
+const EMPTY_AI_USAGE = { completions: 0, prompt_tokens: 0, completion_tokens: 0, extra_allowance: 0, warned_at: null };
+
+function utcDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** Today's AI spend. Zeros rather than undefined, so callers never branch. */
+function getAiUsageToday() {
+  const row = db.prepare('SELECT * FROM ai_usage WHERE date = ?').get(utcDate());
+  return row || { date: utcDate(), ...EMPTY_AI_USAGE };
+}
+
+/**
+ * Adds one completion and its tokens to today's total, and returns the row as
+ * it now stands so the caller can decide whether a threshold was just crossed.
+ */
+function recordAiCompletion({ promptTokens = 0, completionTokens = 0 } = {}) {
+  db.prepare(
+    `INSERT INTO ai_usage (date, completions, prompt_tokens, completion_tokens)
+     VALUES (?, 1, ?, ?)
+     ON CONFLICT(date) DO UPDATE SET
+       completions = completions + 1,
+       prompt_tokens = prompt_tokens + excluded.prompt_tokens,
+       completion_tokens = completion_tokens + excluded.completion_tokens`
+  ).run(utcDate(), Number(promptTokens) || 0, Number(completionTokens) || 0);
+  return getAiUsageToday();
+}
+
+/** Records that the warning has gone out, so it goes out once and not per call. */
+function markAiWarned() {
+  db.prepare(
+    `INSERT INTO ai_usage (date, warned_at) VALUES (?, datetime('now'))
+     ON CONFLICT(date) DO UPDATE SET warned_at = datetime('now')`
+  ).run(utcDate());
+}
+
+function addAiExtraAllowance(extra) {
+  db.prepare(
+    `INSERT INTO ai_usage (date, extra_allowance) VALUES (?, ?)
+     ON CONFLICT(date) DO UPDATE SET extra_allowance = extra_allowance + excluded.extra_allowance`
+  ).run(utcDate(), Number(extra) || 0);
+  return getAiUsageToday();
+}
+
+/** Wipes today's counter, for an admin who knows the spike was legitimate. */
+function resetAiUsageToday() {
+  db.prepare('DELETE FROM ai_usage WHERE date = ?').run(utcDate());
+}
+
 function getSubscriptionByChargeId(telegramChargeId) {
   if (!telegramChargeId) return undefined;
   return db.prepare('SELECT * FROM subscriptions WHERE telegram_charge_id = ?').get(telegramChargeId);
@@ -1232,4 +1295,9 @@ module.exports = {
   ensureChargeIdIndex,
   getAppState,
   setAppState,
+  getAiUsageToday,
+  recordAiCompletion,
+  markAiWarned,
+  addAiExtraAllowance,
+  resetAiUsageToday,
 };

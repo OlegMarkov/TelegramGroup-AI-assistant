@@ -1,6 +1,7 @@
 const config = require('../config');
 const { getFunnelReport, getRetentionReport } = require('../services/analytics');
 const { getAppState } = require('../services/database');
+const { describeBudget } = require('../services/aiBudget');
 
 const DEFAULT_DAYS = 30;
 
@@ -58,8 +59,15 @@ async function statsHandler(ctx) {
   const backedUpAgo =
     Number.isFinite(backedUpAt) && backedUpAt > 0 ? Math.round((Date.now() - backedUpAt) / 3600000) : null;
 
+  const budget = describeBudget();
+  const budgetLine =
+    budget.hardLimit === null
+      ? `🤖 *AI today*: ${budget.completions} completions (no cap set)`
+      : `🤖 *AI today*: ${budget.completions}/${budget.hardLimit} completions${budget.blocked ? ' ⛔ BLOCKED' : ''}`;
+
   sections.push(
     [
+      budgetLine,
       sweptAgo === null
         ? '🧹 *Retention*: no sweep has completed yet'
         : `🧹 *Retention*: last swept ${sweptAgo} min ago`,

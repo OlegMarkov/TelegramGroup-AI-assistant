@@ -23,6 +23,20 @@ module.exports = {
     // summary whenever a day ran long, so this is sized for the worst case
     // rather than the average.
     timeoutMs: Number(process.env.DEEPSEEK_TIMEOUT_MS) || 120000,
+
+    // A ceiling on completions per UTC day, across everybody. Per-user limits
+    // exist (3 summaries a day on free, unlimited on premium) but nothing
+    // bounded the total: a traffic spike, a bug that defeats the digest cache,
+    // or someone farming free accounts all turn into an uncapped bill with no
+    // alert and no brake.
+    //
+    // Both optional and both off by default. A cap somebody has not thought
+    // about is worse than none — it stops the product working at a number
+    // nobody chose. Counted in completions rather than tokens because that is
+    // the unit an operator can actually reason about; tokens are recorded and
+    // reported so the two can be calibrated against each other.
+    dailyWarnCompletions: Number(process.env.DEEPSEEK_DAILY_WARN_COMPLETIONS) || 0,
+    dailyMaxCompletions: Number(process.env.DEEPSEEK_DAILY_MAX_COMPLETIONS) || 0,
   },
 
   redis: {
