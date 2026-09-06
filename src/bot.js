@@ -12,6 +12,7 @@ const { handlePreCheckoutQuery, handleSuccessfulPayment } = require('./services/
 const { startWorker } = require('./services/queue');
 const { startScheduler, startRetentionSweeps } = require('./services/scheduler');
 const { setAdminNotifier } = require('./services/aiBudget');
+const { setAlertSender } = require('./services/keywordAlerts');
 const { getOrCreateChat, linkUserToChat, deactivateChat, claimJoinNotice } = require('./services/database');
 const { isGroupChat } = require('./utils/formatters');
 const { t, DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, PUBLIC_COMMANDS } = require('./utils/i18n');
@@ -173,6 +174,11 @@ async function main() {
       );
     }
   });
+
+  // Same reasoning as the spend notifier: keywordAlerts is reached from
+  // ingestion middleware, and importing a bot client there would put one into
+  // every test that sends a group message.
+  setAlertSender((chatId, text, extra) => bot.telegram.sendMessage(chatId, text, extra));
 
   const worker = startWorker();
   const schedulerWorker = startScheduler();

@@ -70,6 +70,8 @@ src/services/
   payments.js         Stars invoice, pre_checkout, successful_payment.
   ingestionPolicy.js  "May I store this?" - paused chats + opted-out members,
                       cached in memory because it runs on every group message.
+  keywordAlerts.js    Opt-in premium DMs when a keyword matches. Cached
+                      subscriber set, fire-and-forget send, 10/hour cap.
   aiBudget.js         Daily completion/token counter, warn + hard cap. Checked
                       in chatCompletion BEFORE the request. Knows nothing about
                       Telegram; bot.js hands it an admin notifier at startup.
@@ -202,6 +204,17 @@ test/                 17 files, node:test, throwaway SQLite per file, all
   saveMessage; the chat link is still kept, because being unrecorded is not the
   same as being unable to use the bot. A paused chat refuses /summary rather
   than summarizing what is still stored.
+* Keyword alerts DM a user when a tracked group message matches one of their
+  live keywords. Opt-in (users.alerts_enabled), off by default, premium-gated,
+  one tap on the /filter keywords screen. NOT a queue job: the naive form is
+  O(members x keywords) per message, but alerts are opt-in AND premium, so the
+  subscriber set is tiny and usually empty - a cached Set lookup is the whole
+  common-case cost, and a queue would make a paid feature depend on Redis.
+  Sending is fire-and-forget so ingestion never awaits Telegram. allowedKeywords
+  applied on the way out like digest.js. Capped at 10/hour per user via
+  alert_usage, keyed by UTC hour; the match that crosses the cap gets ONE
+  explanation and the rest are counted silently. Never alerts you about your
+  own message. A 403 switches their alerts off.
 * A daily AI spend cap bounds total completions, not just per-user ones.
   ai_usage is keyed by UTC date like daily_usage, so it rolls over with no job.
   Both thresholds are OFF by default on purpose. The warn DMs admins once a

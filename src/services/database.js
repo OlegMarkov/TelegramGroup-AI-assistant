@@ -139,6 +139,16 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_subscription_reminders_user ON subscription_reminders(user_id, sent_at);
 
+  -- Alerts sent per user per hour, so one busy keyword cannot become a
+  -- hundred DMs. Keyed by the UTC hour, so it rolls over on its own.
+  CREATE TABLE IF NOT EXISTS alert_usage (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    hour_key TEXT NOT NULL,
+    sent INTEGER NOT NULL DEFAULT 0,
+    suppressed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, hour_key)
+  );
+
   -- What the AI cost us today. Keyed by UTC date, the same way daily_usage is,
   -- so it rolls over at 00:00 UTC with no job to run and nothing to reset.
   CREATE TABLE IF NOT EXISTS ai_usage (
@@ -209,6 +219,10 @@ addColumnIfMissing('messages', 'is_caption', 'INTEGER NOT NULL DEFAULT 0');
 // today. Minutes rather than hours because a large number of people live at
 // :30 and :45 offsets. This never reaches the scheduler - see utils/timezone.js.
 addColumnIfMissing('users', 'tz_offset_minutes', 'INTEGER');
+
+// Opt-in to keyword alerts. Off by default and never turned on implicitly: this
+// is the flag that decides whether the bot messages somebody unprompted.
+addColumnIfMissing('users', 'alerts_enabled', 'INTEGER NOT NULL DEFAULT 0');
 
 // One row per channel, no matter how many users follow it. Handles are stored
 // lowercased so @Durov and @durov cannot become two chats holding two copies
@@ -327,6 +341,50 @@ function getOrCreateUser({ id, username, firstName, language }) {
     language || null
   );
   return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+}
+
+function getAlertSubscribers() {
+  return db
+    .prepare('SELECT id FROM users WHERE alerts_enabled = 1')
+    .all()
+    .map((r) => r.id);
+}
+
+function setUserAlertsEnabled(userId, enabled) {
+  db.prepare('UPDATE users SET alerts_enabled = ? WHERE id = ?').run(enabled ? 1 : 0, userId);
+}
+
+/**
+ * Claims one alert for this hour, and says what kind of moment this is.
+ *
+ * Returns 'allowed' for a normal alert, 'muted' exactly once — on the match
+ * that crosses the cap, so there is one message explaining the silence — and
+ * 'suppressed' for everything after that until the hour rolls over.
+ *
+ * The claim and the count are one statement for the same reason the join notice
+ * is: two matches arriving together must not both decide there was room.
+ */
+function takeAlertSlot(userId, maxPerHour) {
+  const hourKey = new Date().toISOString().slice(0, 13);
+
+  db.prepare(
+    `INSERT INTO alert_usage (user_id, hour_key, sent) VALUES (?, ?, 0)
+     ON CONFLICT(user_id, hour_key) DO NOTHING`
+  ).run(userId, hourKey);
+
+  const row = db.prepare('SELECT sent, suppressed FROM alert_usage WHERE user_id = ? AND hour_key = ?').get(userId, hourKey);
+
+  if (row.sent < maxPerHour) {
+    db.prepare('UPDATE alert_usage SET sent = sent + 1 WHERE user_id = ? AND hour_key = ?').run(userId, hourKey);
+    return 'allowed';
+  }
+
+  db.prepare('UPDATE alert_usage SET suppressed = suppressed + 1 WHERE user_id = ? AND hour_key = ?').run(
+    userId,
+    hourKey
+  );
+  // The first thing over the line gets the explanation; the rest get silence.
+  return row.suppressed === 0 ? 'muted' : 'suppressed';
 }
 
 function getUserTimezoneOffset(userId) {
@@ -1273,6 +1331,9 @@ module.exports = {
   setUserLanguage,
   getUserTimezoneOffset,
   setUserTimezoneOffset,
+  getAlertSubscribers,
+  setUserAlertsEnabled,
+  takeAlertSlot,
   purgeExpiredMessages,
   purgeRemovedChatData,
   getUserDataSummary,

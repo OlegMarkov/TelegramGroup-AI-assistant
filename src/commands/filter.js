@@ -6,6 +6,8 @@ const { normalize } = require('../services/filterMatcher');
 const { filterCategoriesMenu, filterKeywordsMenu } = require('../keyboards');
 const { t, allTranslations } = require('../utils/i18n');
 const { armPrompt, clearPrompt, captureReply, createSelectionStore } = require('../utils/uiState');
+const { setSubscribed, isSubscribed, MAX_ALERTS_PER_HOUR } = require('../services/keywordAlerts');
+const { setUserAlertsEnabled } = require('../services/database');
 const { track, EVENTS } = require('../services/analytics');
 const logger = require('../utils/logger');
 
@@ -114,7 +116,16 @@ function keywordsView(ctx) {
     })}`;
   }
 
-  return { text, keyboard: filterKeywordsMenu(lang, { keywords: entries, selectedIds, liveIds }) };
+  // Premium-gated, like the digest. Someone on the free plan sees no toggle
+  // at all rather than one that refuses them.
+  const alertsAvailable = limits.scheduledDigests;
+  const alerts = alertsAvailable ? isSubscribed(ctx.from.id) : null;
+
+  if (alerts) {
+    text += `\n\n${t(lang, 'filter.alertsExplainer', { max: MAX_ALERTS_PER_HOUR })}`;
+  }
+
+  return { text, keyboard: filterKeywordsMenu(lang, { keywords: entries, selectedIds, liveIds, alerts }) };
 }
 
 /**
@@ -210,6 +221,30 @@ async function openKeywords(ctx) {
   if (!(await requirePrivate(ctx))) return undefined;
   await ctx.answerCbQuery();
   return showView(ctx, keywordsView);
+}
+
+/**
+ * Turning the alerts on or off.
+ *
+ * The thing that turns this bot from something you ask into something that
+ * messages you, so it is one tap in each direction and never on by default.
+ */
+async function toggleAlerts(ctx) {
+  if (!(await requirePrivate(ctx))) return undefined;
+  const lang = ctx.state.lang;
+  const limits = getLimits(ctx.state.subscription);
+
+  if (!limits.scheduledDigests) {
+    track(EVENTS.FILTER_BLOCKED_PREMIUM, { userId: ctx.from.id });
+    return ctx.answerCbQuery(t(lang, 'digest.premiumOnlyShort'), { show_alert: true });
+  }
+
+  const next = !isSubscribed(ctx.from.id);
+  setUserAlertsEnabled(ctx.from.id, next);
+  setSubscribed(ctx.from.id, next);
+
+  await showView(ctx, keywordsView);
+  return ctx.answerCbQuery(t(lang, next ? 'filter.alertsEnabledShort' : 'filter.alertsDisabledShort'));
 }
 
 async function backToCategories(ctx) {

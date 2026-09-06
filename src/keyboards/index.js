@@ -66,7 +66,7 @@ function filterCategoriesMenu(lang, selectedCategories = [], keywordCount = 0) {
  * the keyword itself — callback_data is capped at 64 bytes, which a 50-character
  * Cyrillic keyword blows straight past.
  */
-function filterKeywordsMenu(lang, { keywords, selectedIds = new Set(), liveIds = null }) {
+function filterKeywordsMenu(lang, { keywords, selectedIds = new Set(), liveIds = null, alerts = null }) {
   const rows = keywords.map(({ id, word }) => {
     const mark = selectedIds.has(id) ? '☑️' : '▫️';
     // Keywords past the plan's allowance stay in the list — they are still
@@ -86,9 +86,26 @@ function filterKeywordsMenu(lang, { keywords, selectedIds = new Set(), liveIds =
     );
   }
 
+  // The alerts toggle lives here because this is the screen that owns
+  // keywords, and an alert is what a keyword does when you are not looking.
+  // `alerts` is null for a plan that cannot have them, so the row is absent
+  // rather than present-and-refusing.
+  const alertRow =
+    alerts === null
+      ? []
+      : [
+          [
+            Markup.button.callback(
+              t(lang, alerts ? 'filter.alertsOn' : 'filter.alertsOff'),
+              'filter:alerts:toggle'
+            ),
+          ],
+        ];
+
   return Markup.inlineKeyboard([
     ...rows,
     actions,
+    ...alertRow,
     [Markup.button.callback(t(lang, 'filter.keywordsBackButton'), 'filter:back')],
   ]);
 }

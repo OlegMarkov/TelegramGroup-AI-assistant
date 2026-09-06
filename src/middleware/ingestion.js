@@ -1,5 +1,6 @@
 const { getOrCreateChat, linkUserToChat, saveMessage } = require('../services/database');
 const { mayStoreMessage } = require('../services/ingestionPolicy');
+const { alertOnMessageInBackground } = require('../services/keywordAlerts');
 const { isGroupChat } = require('../utils/formatters');
 const { isMenuButtonText } = require('../utils/i18n');
 const { track, EVENTS } = require('../services/analytics');
@@ -46,6 +47,18 @@ function ingestion() {
           text: content,
           createdAt: new Date(message.date * 1000).toISOString(),
           isCaption,
+        });
+
+        // Not awaited: this hands the update on immediately, and a DM here
+        // would put a Telegram round trip in front of every group message.
+        // Costs one Set lookup when nobody has alerts on, which is the normal
+        // case — see the note in keywordAlerts.js about why this is not a job.
+        alertOnMessageInBackground({
+          chat: ctx.chat,
+          messageId: message.message_id,
+          authorId: ctx.from.id,
+          authorName: ctx.from.username || ctx.from.first_name,
+          text: content,
         });
       }
     }

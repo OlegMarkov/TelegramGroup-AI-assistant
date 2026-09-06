@@ -45,6 +45,16 @@ Limits are defined in [`src/models/subscription.js`](src/models/subscription.js)
 
 **Group-count limit specifics**: a free user's "first group" is whichever tracked group they were *first active in* (earliest `chat_members.joined_at`), not the first one they happen to run a command in. This only gates which chats a given user can personally query — **message ingestion keeps tracking every group the bot is in for every member, regardless of any individual member's plan**, since the group may belong to other, possibly premium, members who still need it working.
 
+## Keyword alerts
+
+Opt-in, off by default, premium-only, and switched on or off with one tap on the `/filter` keywords screen. When a message in a group you are in matches one of your live keywords, the bot DMs you the quoted message with a link back to it.
+
+This is the one feature that changes what the bot is — from something you ask to something that messages you — so everything about it is shaped by not becoming spam: never for your own messages, at most **10 an hour** per person, with a single message explaining the silence when that cap is hit and nothing further until the hour rolls over. Suppressed matches are counted, so the noise is measurable.
+
+**Why this is not a queue job.** The naive shape is O(members × keywords) on every group message. The cheap fix is not BullMQ, it is arithmetic: alerts are opt-in *and* premium, so the set of people who want them is small and usually empty. `keywordAlerts.js` caches that whole set, and the common case costs one `Set` lookup and returns. A queue would move the same work off the request path while making a paid feature depend on Redis being up — worth it if the work were unavoidable, and it is not. Sending is fire-and-forget so ingestion never waits on a Telegram round trip.
+
+`allowedKeywords` is applied on the way out, exactly as `digest.js` does it and for the same reason: a subscription can lapse between adding a keyword and a message arriving. Quoted text goes through `escapeMarkdown` with a plain-text retry — it is written by strangers. A 403 switches that user's alerts off rather than retrying for ever.
+
 ## Spend cap
 
 Per-user limits bound what one person can do; `DEEPSEEK_DAILY_WARN_COMPLETIONS` and `DEEPSEEK_DAILY_MAX_COMPLETIONS` bound the **total**. Both optional and both off by default — a cap nobody has chosen is worse than no cap, because it stops the product working at an arbitrary number.

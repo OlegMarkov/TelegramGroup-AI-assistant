@@ -180,6 +180,13 @@ module.exports = {
     keywordsButton: '✏️ My keywords ({count})',
     keywordsButtonEmpty: '✏️ Add my own keywords',
     keywordsBackButton: '⬅️ Topics',
+    alertsOn: '🔔 Alerts: ON — tap to stop',
+    alertsOff: '🔕 Alerts: off — tap to be told when a keyword comes up',
+    alertsEnabledShort: 'Alerts on',
+    alertsDisabledShort: 'Alerts off',
+    alertsExplainer:
+      "🔔 I'll DM you when one of these words comes up in a group you're in. " +
+      'At most {max} an hour, and never for your own messages.',
     keywordsAddButton: '➕ Add keywords',
     keywordsRemoveButton: '🗑 Remove ({count})',
     keywordsHeader: '✏️ Your keywords',
@@ -353,6 +360,17 @@ module.exports = {
       'What I already stored is kept until it expires normally — pausing is not a deletion. ' +
       'Any admin can run /resume to start again.',
     resumed: "▶️ *Resumed.* I'm storing this chat's messages again. /privacy explains what that means.",
+  },
+
+  alerts: {
+    match:
+      '🔔 *{author}* in *{chat}*:\n\n' +
+      '{text}',
+    openButton: '↗️ Open the message',
+    // The one message that explains the silence, sent once per hour at most.
+    muted:
+      '🔕 That is {max} keyword alerts this hour, so I will hold the rest until the next one.\n\n' +
+      'Too noisy? /filter lets you narrow the words, or switch alerts off entirely.',
   },
 
   status: {
