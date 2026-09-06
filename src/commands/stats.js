@@ -1,6 +1,6 @@
 const config = require('../config');
 const { getFunnelReport, getRetentionReport } = require('../services/analytics');
-const { getAppState } = require('../services/database');
+const { getAppState, getSummaryFeedbackCounts } = require('../services/database');
 const { describeBudget } = require('../services/aiBudget');
 
 const DEFAULT_DAYS = 30;
@@ -89,6 +89,19 @@ async function statsHandler(ctx) {
   const reminderPct =
     funnel.remindedUsers > 0 ? ((funnel.renewedAfterReminder / funnel.remindedUsers) * 100).toFixed(1) : '0.0';
   sections.push(`🔔 *Reminder → renewal*: ${funnel.renewedAfterReminder}/${funnel.remindedUsers} (${reminderPct}%)`);
+
+  // Whether the summaries are any good, which nothing measured before. Split
+  // by language because the prompt is language-specific: an average across both
+  // hides the thing worth seeing when a prompt change is being judged.
+  const feedback = getSummaryFeedbackCounts(days);
+  if (feedback.length > 0) {
+    const totals = feedback.reduce((acc, row) => ({ up: acc.up + row.up, down: acc.down + row.down }), {
+      up: 0,
+      down: 0,
+    });
+    const perLanguage = feedback.map((row) => `${row.language || '?'} ${row.up}/${row.down}`).join('   ');
+    sections.push(`👍 *Summary feedback*: ${totals.up} up / ${totals.down} down\n\`\`\`\n${perLanguage}\n\`\`\``);
+  }
 
   // Rolling retention: of users old enough to have returned, how many did.
   const curveRows = curve

@@ -19,6 +19,7 @@ const {
 const { splitForTelegram } = require('../utils/formatters');
 const { createSender, isBlockedError, isBadRequestError } = require('../utils/telegramSend');
 const { SpendCapReachedError } = require('./aiBudget');
+const { feedbackKeyboard } = require('../commands/feedback');
 const { t, normalizeLanguage } = require('../utils/i18n');
 const { getLimits, FREE_LIMITS, PREMIUM_LIMITS } = require('../models/subscription');
 const { planLabel } = require('../keyboards');
@@ -105,13 +106,18 @@ async function runDueDigests({ sleep } = {}) {
 
       const body = `${header}${truncatedNote}\n\n${result.summaryText}${result.highlightBlock}${footer}`;
 
-      for (const part of splitForTelegram(body)) {
+      const parts = splitForTelegram(body);
+
+      for (const [index, part] of parts.entries()) {
+        // Last part only, same as the on-demand path.
+        const extra = index === parts.length - 1 ? feedbackKeyboard(lang, { chatId: entry.chat_id, hours }) : {};
+
         await sender.send(async () => {
           // Same two hazards as the on-demand path: a digest can exceed
           // Telegram's 4096-character limit, and model output can carry
           // unbalanced Markdown. Either one otherwise loses the whole digest.
           try {
-            await telegram.sendMessage(entry.user_id, part, { parse_mode: 'Markdown' });
+            await telegram.sendMessage(entry.user_id, part, { parse_mode: 'Markdown', ...extra });
           } catch (sendError) {
             // Only a 400 means "I could not parse that". A block, a rate limit
             // or a dropped connection would fail identically as plain text, so
@@ -123,7 +129,7 @@ async function runDueDigests({ sleep } = {}) {
               userId: entry.user_id,
               error: sendError.message,
             });
-            await telegram.sendMessage(entry.user_id, part);
+            await telegram.sendMessage(entry.user_id, part, extra);
           }
         });
       }

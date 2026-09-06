@@ -14,6 +14,7 @@ const { generateDigest } = require('../services/digest');
 const { isChatPaused } = require('../services/ingestionPolicy');
 const { ChannelUnavailableError } = require('../services/channelSource');
 const { SpendCapReachedError } = require('../services/aiBudget');
+const { feedbackKeyboard } = require('./feedback');
 const { getLimits, PREMIUM_LIMITS } = require('../models/subscription');
 const { isGroupChat, splitForTelegram } = require('../utils/formatters');
 const { startTyping } = require('../utils/typing');
@@ -136,16 +137,25 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
     `${t(lang, 'summary.header', { hours })}${truncatedNote}\n\n` +
     `${result.summaryText}${result.highlightBlock}${footer}`;
 
+  const parts = splitForTelegram(body);
+
   let sent;
-  for (const part of splitForTelegram(body)) {
+  for (const [index, part] of parts.entries()) {
+    // Only the last part carries the buttons: a long summary arrives as
+    // several messages, and a thumbs pair under each one asks the same
+    // question four times.
+    const extra = index === parts.length - 1 ? feedbackKeyboard(lang, { chatId, hours }) : {};
+
     try {
-      sent = await ctx.reply(part, { parse_mode: 'Markdown' });
+      sent = await ctx.reply(part, { parse_mode: 'Markdown', ...extra });
     } catch (error) {
       // The summary is model output shaped by content we do not control, so an
       // unbalanced * or _ is always possible and makes Telegram reject the
-      // whole message. Delivering it unformatted beats delivering nothing.
+      // whole message. Delivering it unformatted beats delivering nothing —
+      // and the buttons come with it, since the question is about the summary
+      // rather than about its formatting.
       logger.warn('Summary part rejected with Markdown, resending as plain text', { error: error.message });
-      sent = await ctx.reply(part);
+      sent = await ctx.reply(part, extra);
     }
   }
   return sent;

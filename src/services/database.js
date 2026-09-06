@@ -149,6 +149,25 @@ db.exec(`
     PRIMARY KEY (user_id, hour_key)
   );
 
+  -- One row per person per delivered summary. The vote is the record, not an
+  -- analytics event: the by-language breakdown is the whole point, and the
+  -- events table can only carry that inside JSON metadata. Two records of the
+  -- same fact are two records that can disagree.
+  --
+  -- Keyed on the DELIVERED MESSAGE, so a group summary everyone can see takes
+  -- one vote per person and changing your mind replaces it rather than
+  -- counting twice.
+  CREATE TABLE IF NOT EXISTS summary_feedback (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    vote INTEGER NOT NULL,
+    hours INTEGER,
+    language TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, chat_id, message_id)
+  );
+
   -- What the AI cost us today. Keyed by UTC date, the same way daily_usage is,
   -- so it rolls over at 00:00 UTC with no job to run and nothing to reset.
   CREATE TABLE IF NOT EXISTS ai_usage (
@@ -368,6 +387,43 @@ function getOrCreateUser({ id, username, firstName, language }) {
  * Returned as ids in a stable order, because the count shown in the preview has
  * to be the count that is actually messaged.
  */
+/**
+ * Records how somebody rated one delivered summary.
+ *
+ * Upsert rather than insert: tapping the other thumb changes your mind, which
+ * is a correction and not a second opinion.
+ */
+function recordSummaryFeedback({ userId, chatId, messageId, vote, hours, language }) {
+  db.prepare(
+    `INSERT INTO summary_feedback (user_id, chat_id, message_id, vote, hours, language)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, chat_id, message_id) DO UPDATE SET
+       vote = excluded.vote,
+       hours = excluded.hours,
+       language = excluded.language,
+       created_at = datetime('now')`
+  ).run(userId, chatId, messageId, vote > 0 ? 1 : -1, hours || null, language || null);
+}
+
+/**
+ * Votes grouped by language, which is the breakdown that makes a prompt change
+ * comparable before and after — the prompt is language-specific, so an average
+ * across both hides exactly the thing worth seeing.
+ */
+function getSummaryFeedbackCounts(sinceDays = 30) {
+  return db
+    .prepare(
+      `SELECT language,
+              SUM(CASE WHEN vote > 0 THEN 1 ELSE 0 END) AS up,
+              SUM(CASE WHEN vote < 0 THEN 1 ELSE 0 END) AS down
+       FROM summary_feedback
+       WHERE created_at >= datetime('now', ?)
+       GROUP BY language
+       ORDER BY language`
+    )
+    .all(`-${sinceDays} days`);
+}
+
 function getBroadcastRecipients() {
   return db
     .prepare(
@@ -1414,6 +1470,8 @@ module.exports = {
   setUserLanguage,
   getUserTimezoneOffset,
   setUserTimezoneOffset,
+  recordSummaryFeedback,
+  getSummaryFeedbackCounts,
   getBroadcastRecipients,
   getAlertSubscribers,
   setUserAlertsEnabled,

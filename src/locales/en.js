@@ -405,6 +405,13 @@ module.exports = {
     },
   },
 
+  feedback: {
+    up: '👍 Useful',
+    down: '👎 Not useful',
+    thanksUp: 'Thanks — noted',
+    thanksDown: 'Thanks — noted, I will work on it',
+  },
+
   status: {
     header: '📊 *Where you stand*',
     planFree: '*Plan*: Free',

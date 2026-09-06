@@ -391,6 +391,13 @@ module.exports = {
     },
   },
 
+  feedback: {
+    up: '👍 Полезно',
+    down: '👎 Не полезно',
+    thanksUp: 'Спасибо — учтено',
+    thanksDown: 'Спасибо — учтено, буду улучшать',
+  },
+
   status: {
     header: '📊 *Ваш статус*',
     planFree: '*Тариф*: Бесплатный',

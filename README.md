@@ -58,6 +58,16 @@ The cap itself stays at 200 until there is a measurement to move it against: `ai
 
 Note that a 168-hour cache entry cannot collide with a 24-hour one — the digest cache is keyed by `(chat_id, hours, language)` — so **every weekly digest is a fresh DeepSeek call**. That is correct, and worth knowing when reading `/spend`.
 
+## Summary feedback
+
+Every delivered summary carries a thumbs up / thumbs down pair, on the **last** part only — a long summary arrives as several messages, and a pair under each asks the same question four times.
+
+Votes go in `summary_feedback`, keyed on **(user, chat, delivered message)**. That makes it one vote per person on a summary the whole group can see, and tapping the other thumb changes your mind rather than counting twice. The vote is the record rather than an analytics event: the by-language breakdown is the entire point, the events table can only carry that inside JSON metadata, and two records of the same fact are two records that can disagree.
+
+`callback_data` carries identifiers only and never text — 26 bytes of the 64 Telegram allows, worst case. It includes the **summarized** chat id, which is not the chat the message was delivered to: a summary requested in a DM is about somewhere else, and "which groups produce bad summaries" is the question worth answering.
+
+`/stats` reports the totals split by language, because the prompt is language-specific and an average across both hides exactly what a prompt change needs to be judged on.
+
 ## Broadcast
 
 The most dangerous command in the bot: it messages every user and cannot be recalled. Shaped accordingly.
