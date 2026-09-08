@@ -447,5 +447,6 @@ module.exports = (bot) => {
   bot.action('filter:kw:addcancel', addCancelCallback);
   bot.action('filter:kw:remove', removeKeywords);
   bot.action(/^filter:kw:([0-9a-f]{10})$/, toggleKeyword);
+  bot.action('filter:alerts:toggle', toggleAlerts);
   bot.on('text', captureReply(KEYWORD_PROMPT, handleKeywordAnswer));
 };

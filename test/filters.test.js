@@ -15,6 +15,7 @@ const { buildFilterMatcher } = require('../src/services/filterMatcher');
 const { allowedKeywords, MAX_KEYWORDS, MAX_KEYWORD_LENGTH } = require('../src/models/filter');
 const { FREE_LIMITS, PREMIUM_LIMITS } = require('../src/models/subscription');
 const registerFilter = require('../src/commands/filter');
+const alerts = require('../src/services/keywordAlerts');
 
 const handlers = { commands: {}, actions: [], text: null };
 const fakeBot = {
@@ -510,4 +511,76 @@ test('a keyword is highlighted in a digest the same way a category is', async ()
   const matches = buildFilterMatcher(db.getUserFilters(user.id));
   assert.equal(matches('прислали квартальный отчет по продажам'), true, 'ё and е are the same word');
   assert.equal(matches('годовой отчет'), false);
+});
+
+test('the alerts row switches on, and stays on', async () => {
+  // The button was drawn for months before anything was listening to it:
+  // toggleAlerts existed, the keyboard emitted filter:alerts:toggle, and no
+  // bot.action() ever claimed it, so tapping it did nothing at all.
+  const user = newUser(816, 'Alerts');
+  db.setUserFilters(user.id, { keywords: ['zebra'], categories: [] });
+
+  const before = await fireCallback('filter:keywords', { from: user, subscription: PREMIUM });
+  assert.ok(
+    buttons(before).some((l) => /Alerts: off/i.test(l)),
+    'never on by default — this is the thing that turns the bot into something that messages you'
+  );
+
+  const on = await fireCallback('filter:alerts:toggle', { from: user, subscription: PREMIUM });
+  assert.equal(db.db.prepare('SELECT alerts_enabled FROM users WHERE id = ?').get(user.id).alerts_enabled, 1);
+  assert.equal(alerts.isSubscribed(user.id), true, 'and the delivery path agrees, not just the row');
+  assert.ok(buttons(on).some((l) => /Alerts: ON/.test(l)), 'the keyboard redraws in the new state');
+
+  const off = await fireCallback('filter:alerts:toggle', { from: user, subscription: PREMIUM });
+  assert.equal(db.db.prepare('SELECT alerts_enabled FROM users WHERE id = ?').get(user.id).alerts_enabled, 0);
+  assert.equal(alerts.isSubscribed(user.id), false);
+  assert.ok(buttons(off).some((l) => /Alerts: off/i.test(l)), 'one tap in each direction');
+});
+
+test('a free plan is told why rather than silently ignored', async () => {
+  const user = newUser(817, 'Free');
+  db.setUserFilters(user.id, { keywords: ['zebra'], categories: [] });
+
+  const view = await fireCallback('filter:keywords', { from: user });
+  assert.ok(!buttons(view).some((l) => /Alerts:/i.test(l)), 'the row is absent, not present-and-refusing');
+
+  // Reachable anyway from a keyboard drawn before the subscription lapsed.
+  await fireCallback('filter:alerts:toggle', { from: user });
+  assert.equal(db.db.prepare('SELECT alerts_enabled FROM users WHERE id = ?').get(user.id).alerts_enabled, 0);
+});
+
+test('every button the filter screens draw has something listening to it', async () => {
+  // The general form of the bug above. A callback_data with no registered
+  // handler is invisible in review and silent in production: Telegram shows a
+  // spinner, the spinner stops, nothing happens, and nothing is logged.
+  const user = newUser(818, 'Wiring');
+  db.setUserFilters(user.id, { keywords: ['zebra'], categories: ['news'] });
+  alerts.setSubscribed(user.id, false);
+
+  const screens = [
+    await run('filter', { from: user, subscription: PREMIUM, text: '/filter' }),
+    await fireCallback('filter:keywords', { from: user, subscription: PREMIUM }),
+  ];
+  // With a row ticked, so the remove button is drawn too.
+  const rowId = callbackFor(screens[1], /zebra/);
+  screens.push(await fireCallback(rowId, { from: user, subscription: PREMIUM }));
+
+  const seen = new Set();
+  for (const ctx of screens) {
+    for (const markup of ctx.markups) {
+      for (const button of markup.inline_keyboard.flat()) {
+        if (button.callback_data) seen.add(button.callback_data);
+      }
+    }
+  }
+  assert.ok(seen.has('filter:alerts:toggle'), 'the toggle is among the buttons actually checked');
+
+  const orphans = [...seen].filter(
+    (data) => !handlers.actions.some(({ pattern }) => matchAction(pattern, data))
+  );
+  assert.deepEqual(orphans, [], 'these buttons are drawn but do nothing when tapped');
+
+  for (const data of seen) {
+    assert.ok(Buffer.byteLength(data) <= 64, `${data} is over Telegram's 64-byte callback_data cap`);
+  }
 });
