@@ -15,17 +15,29 @@
  * from?" rather than to measure the product.
  *
  *   node --experimental-sqlite scripts/usage-snapshot.js [--days=30] [--out=path]
+ *   node --experimental-sqlite scripts/usage-snapshot.js --db=~/TelegramBot-Backups/backup-20260909-030001.db
+ *
+ * --db reads a database file from elsewhere — a snapshot pulled off the VPS by
+ * deploy/pull-backups.ps1, most usefully, since the working data/bot.db on a
+ * development machine is a handful of test rows. It is copied to a temp file
+ * first and the copy is what gets opened. That is not caution for its own
+ * sake: services/database.js opens read-write and runs schema migrations on
+ * import, so reading a backup in place would rewrite it — and
+ * pull-backups.ps1 is built on backups being immutable, verifying them with
+ * PRAGMA integrity_check against exactly that assumption.
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-
-const config = require('../src/config');
-const { db, getSummaryFeedbackCounts } = require('../src/services/database');
-const { getFunnelReport, getRetentionReport } = require('../src/services/analytics');
+const crypto = require('crypto');
 
 const DEFAULT_DAYS = 30;
-const DEFAULT_OUT = path.join(path.dirname(path.resolve(config.database.path)), 'usage-snapshot.md');
+
+// Repo-relative rather than next to whichever database was read: the agent is
+// told to look in data/, and a --db run must not scatter snapshots into the
+// temp dir where nothing will ever find them.
+const DEFAULT_OUT = path.join(__dirname, '..', 'data', 'usage-snapshot.md');
 
 // Below this, the numbers are anecdote wearing a table's clothing. The figure
 // is not statistical — it is the point where a single enthusiastic tester can
@@ -37,6 +49,71 @@ function arg(name, fallback) {
   const hit = process.argv.slice(2).find((a) => a.startsWith(`--${name}=`));
   return hit ? hit.slice(name.length + 3) : fallback;
 }
+
+function expandHome(p) {
+  return p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : p;
+}
+
+// -- everything to here runs before src/ is imported, on purpose -------------
+// config.js reads process.env at import time and database.js opens the file at
+// import time, so a --db copy has to be in place before either is required.
+
+const days = Number(arg('days', DEFAULT_DAYS)) || DEFAULT_DAYS;
+const out = path.resolve(expandHome(arg('out', DEFAULT_OUT)));
+const sourceArg = arg('db', null);
+
+let tempCopy = null;
+let sourceLabel = null;
+
+if (sourceArg) {
+  const source = path.resolve(expandHome(sourceArg));
+  if (!fs.existsSync(source)) {
+    process.stderr.write(`No such database: ${source}\n`);
+    process.exit(1);
+  }
+
+  tempCopy = path.join(os.tmpdir(), `usage-snapshot-${crypto.randomUUID()}.db`);
+  fs.copyFileSync(source, tempCopy);
+
+  // A VACUUM INTO snapshot is one self-contained file, but a database copied
+  // while its bot was running is not: leaving the WAL behind would silently
+  // drop every transaction that had not been checkpointed yet.
+  for (const suffix of ['-wal', '-shm']) {
+    if (fs.existsSync(source + suffix)) fs.copyFileSync(source + suffix, tempCopy + suffix);
+  }
+
+  // dotenv does not override variables that are already set, so this wins over
+  // whatever .env says.
+  process.env.DATABASE_PATH = tempCopy;
+  sourceLabel = source;
+}
+
+const config = require('../src/config');
+const { db, getSummaryFeedbackCounts } = require('../src/services/database');
+const { getFunnelReport, getRetentionReport } = require('../src/services/analytics');
+
+if (!sourceLabel) sourceLabel = path.resolve(config.database.path);
+
+// On exit rather than after the report, so a throw on the way cannot leave a
+// copy of the production database sitting in the temp directory.
+process.on('exit', () => {
+  if (!tempCopy) return;
+  try {
+    db.close();
+  } catch {
+    // Already closed, or never opened. The unlink below is the part that matters.
+  }
+  for (const suffix of ['', '-wal', '-shm']) {
+    try {
+      fs.rmSync(tempCopy + suffix, { force: true });
+    } catch (error) {
+      // Windows refuses to unlink a file something still holds open. Say so
+      // rather than failing the run: the snapshot is already written, and a
+      // stray copy of the database is worth knowing about.
+      process.stderr.write(`Could not remove temp copy ${tempCopy}${suffix}: ${error.message}\n`);
+    }
+  }
+});
 
 function pct(part, whole) {
   return whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : '—';
@@ -51,10 +128,6 @@ function table(headers, rows) {
   ].join('\n');
 }
 
-const days = Number(arg('days', DEFAULT_DAYS)) || DEFAULT_DAYS;
-const out = path.resolve(arg('out', DEFAULT_OUT));
-
-const dbPath = path.resolve(config.database.path);
 const totalUsers = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
 const totalEvents = db.prepare('SELECT COUNT(*) AS n FROM events').get().n;
 
@@ -68,8 +141,12 @@ const sections = [];
 
 sections.push(`# Usage snapshot
 
-Generated ${new Date().toISOString()} from \`${dbPath}\`, covering the last ${days} days.
-Regenerate with \`node --experimental-sqlite scripts/usage-snapshot.js --days=${days}\`.
+Generated ${new Date().toISOString()} from \`${sourceLabel}\`${
+  tempCopy ? ' (read from a temp copy; the source was not modified)' : ''
+}, covering the last ${days} days.
+Regenerate with \`node --experimental-sqlite scripts/usage-snapshot.js --days=${days}${
+  sourceArg ? ` --db=${sourceArg}` : ''
+}\`.
 
 **${totalUsers} ${totalUsers === 1 ? 'user' : 'users'}, ${totalEvents} events recorded all-time.**`);
 
@@ -165,4 +242,8 @@ Reaching for one of these means saying so rather than guessing:
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, `${sections.join('\n\n')}\n`, 'utf8');
 
-process.stdout.write(`Wrote ${out} (${totalUsers} users, ${totalEvents} events${thin ? ', FLAGGED AS THIN' : ''})\n`);
+process.stdout.write(
+  `Wrote ${out} (${totalUsers} ${totalUsers === 1 ? 'user' : 'users'}, ${totalEvents} events${
+    thin ? ', FLAGGED AS THIN' : ''
+  })\n`
+);
