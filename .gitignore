@@ -9,8 +9,11 @@ data/
 *.log
 npm-debug.log*
 
-# Machine-local editor/agent settings
-.claude/settings.local.json
+# Machine-local editor/agent settings, and the subagent definitions that sit
+# alongside them. Untracked for now: this is how one machine is set up to work
+# on the project, not part of the product. The agent configs are worth sharing
+# if the team grows — settings.local.json never is.
+.claude/
 
 # Database snapshots written by deploy/backup.sh on the server. Ignored so a
 # `git clean` can't delete them and they don't clutter `git status`.
@@ -20,3 +23,8 @@ backups/
 # ready-to-paste prompt. Deliberately not committed — this is a backlog, not
 # part of the product, and it should be free to go stale without a diff.
 Tasks/
+
+# Agent guidance. Untracked for now: it describes the codebase rather than
+# being part of it, and it should be free to be edited or thrown away without
+# a diff. Commit it if it stops being one person's working notes.
+CLAUDE.md
