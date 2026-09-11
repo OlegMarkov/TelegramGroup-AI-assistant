@@ -149,8 +149,8 @@ module.exports = {
       'Лимит обнулится в 00:00 UTC. Всё остальное — /find, /filter, /channels — работает.',
     noActivity: 'За последние {hours} ч нет сообщений для сводки.',
     header: '📝 *Сводка — последние {hours} ч*{autoNote}',
-    autoNoteSinceLast: ' (с момента последней сводки)',
-    autoNoteFirstTime: ' (первая сводка здесь — показаны последние 24 часа)',
+    autoNoteSinceLast: ' (с вашей прошлой сводки)',
+    autoNoteFirstTime: ' (первая сводка здесь)',
     truncatedNote: '_Много сообщений — здесь только последние {shown} из {total}._',
     pickChat: 'По какому чату сделать сводку?',
     hiddenGroupsNote:
