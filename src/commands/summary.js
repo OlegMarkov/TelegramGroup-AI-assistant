@@ -9,6 +9,8 @@ const {
   isChatWithinFreeLimit,
   getSummaryUsageToday,
   incrementSummaryUsage,
+  getHoursSinceLastSummary,
+  recordSummaryRead,
 } = require('../services/database');
 const { generateDigest } = require('../services/digest');
 const { isChatPaused } = require('../services/ingestionPolicy');
@@ -25,7 +27,12 @@ const logger = require('../utils/logger');
 const DEFAULT_HOURS = 24;
 const ABSOLUTE_MAX_HOURS = 168; // sanity ceiling before per-plan clamping
 
+// null means "no argument given", and is resolved per (user, chat) from
+// summary_reads much later, in buildAndSendSummary. An explicit but unusable
+// number still falls back to DEFAULT_HOURS: "/summary banana" asked for a
+// number and got it wrong, which is a different thing from not asking.
 function parseHours(args) {
+  if (args.length === 0) return null;
   const n = Number(args[0]);
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_HOURS;
   return Math.min(n, ABSOLUTE_MAX_HOURS);
@@ -38,7 +45,9 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
   const chat = getChatById(chatId);
   const isChannel = Boolean(chat && chat.source === 'channel');
 
-  track(EVENTS.SUMMARY_REQUESTED, { userId: requesterId, chatId });
+  const isAuto = requestedHours === null;
+
+  track(EVENTS.SUMMARY_REQUESTED, { userId: requesterId, chatId, metadata: { auto: isAuto } });
 
   // Enforced here rather than only in the picker: callback_data is supplied by
   // the client, so a user whose subscription lapsed still has working buttons
@@ -71,10 +80,31 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
     return ctx.reply(t(lang, 'summary.blockedDailyLimit', { limit: limits.maxSummariesPerDay }));
   }
 
-  const hours = Math.min(requestedHours, limits.maxLookbackHours);
+  // Resolved here rather than in summaryHandler: "since you last checked" is
+  // per (user, chat), and the handler does not always know the chat yet — with
+  // several linked chats it asks which one afterwards.
+  let elapsed = null;
+  let rawHours;
+  if (isAuto) {
+    elapsed = getHoursSinceLastSummary(requesterId, chatId);
+    // Rounded UP, and to WHOLE hours. Up, because "since you last checked" must
+    // never silently drop the most recent minutes of conversation — covering up
+    // to an hour too much is the safe direction. Whole, because digest_cache is
+    // keyed on this number: a per-user window carrying fractions would make
+    // every request its own cache entry. Math.max(1) guards a zero or negative
+    // window from clock skew.
+    rawHours = elapsed === null ? DEFAULT_HOURS : Math.max(1, Math.ceil(elapsed));
+  } else {
+    rawHours = requestedHours;
+  }
+
+  // The very same clamp an explicit argument gets, reused rather than
+  // duplicated: someone who has not asked for a fortnight is still capped at
+  // 24h or 72h by plan, and the note below tells them so.
+  const hours = Math.min(rawHours, limits.maxLookbackHours);
   const isPremium = Boolean(ctx.state.subscription);
   let capNote = '';
-  if (hours < requestedHours) {
+  if (hours < rawHours) {
     capNote = isPremium
       ? t(lang, 'summary.capNotePremium', { hours })
       : t(lang, 'summary.capNoteFree', { hours, maxHours: PREMIUM_LIMITS.maxLookbackHours });
@@ -133,8 +163,14 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
     ? `\n${t(lang, 'summary.truncatedNote', { shown: result.messageCount, total: result.totalAvailable })}`
     : '';
 
+  // Which window this actually covered. Empty for an explicit argument: the
+  // user typed the number and does not need it read back to them.
+  const autoNote = isAuto
+    ? t(lang, elapsed === null ? 'summary.autoNoteFirstTime' : 'summary.autoNoteSinceLast')
+    : '';
+
   const body =
-    `${t(lang, 'summary.header', { hours })}${truncatedNote}\n\n` +
+    `${t(lang, 'summary.header', { hours, autoNote })}${truncatedNote}\n\n` +
     `${result.summaryText}${result.highlightBlock}${footer}`;
 
   const parts = splitForTelegram(body);
@@ -158,6 +194,13 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
       sent = await ctx.reply(part, extra);
     }
   }
+
+  // Recorded only once delivery has actually happened. incrementSummaryUsage
+  // above can afford to run early because a daily quota self-corrects within
+  // 24h — but a read recorded for a summary the user never received would skip
+  // that content permanently, since every later "since you last checked" would
+  // start from a timestamp covering messages they never saw.
+  recordSummaryRead(requesterId, chatId);
   return sent;
 }
 
@@ -198,7 +241,10 @@ async function summaryHandler(ctx) {
       // Groups and channels sit in one list, so the icon is the only thing
       // telling the user which kind of thing they are about to summarize.
       text: `${c.source === 'channel' ? '📢 ' : '💬 '}${c.title || t(lang, 'common.chatFallback', { id: c.id })}`,
-      callback_data: `summary:chat:${c.id}:${hours}`,
+      // The sentinel is spelled out rather than interpolating `hours` directly:
+      // a bare null stringifies to the literal text "null", which reads back as
+      // NaN on the other side.
+      callback_data: `summary:chat:${c.id}:${hours === null ? 'auto' : hours}`,
     },
   ]);
   return ctx.reply(t(lang, 'summary.pickChat'), { reply_markup: { inline_keyboard: buttons } });
@@ -213,11 +259,17 @@ async function summaryCallback(ctx) {
   }
 
   await ctx.answerCbQuery();
-  return buildAndSendSummary(ctx, chatId, Number(hoursRaw) || DEFAULT_HOURS);
+  // 'auto' is tested before the coercion on purpose: Number('auto') is NaN, so
+  // `Number(hoursRaw) || DEFAULT_HOURS` would quietly turn every chat picked
+  // off the list back into a fixed 24h window and defeat the default entirely.
+  const requestedHours = hoursRaw === 'auto' ? null : Number(hoursRaw) || DEFAULT_HOURS;
+  return buildAndSendSummary(ctx, chatId, requestedHours);
 }
 
 module.exports = (bot) => {
   bot.command('summary', summaryHandler);
   bot.hears(allTranslations('menu.summary'), summaryHandler);
-  bot.action(/^summary:chat:(-?\d+):(\d+)$/, summaryCallback);
+  bot.action(/^summary:chat:(-?\d+):(\d+|auto)$/, summaryCallback);
 };
+
+module.exports.parseHours = parseHours;

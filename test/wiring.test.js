@@ -324,6 +324,18 @@ test('every button the bot draws has a handler listening for it', () => {
   );
 });
 
+test("the summary picker's 'auto' sentinel has a handler", () => {
+  // Not covered by the sweep above: HOLE_VALUES is all numbers, so the
+  // templated summary:chat:${id}:${...} callback_data is only ever expanded
+  // with an hour count — never with the sentinel the picker actually emits when
+  // the user typed no argument. Number('auto') is NaN, and a route that only
+  // accepts digits drops the tap silently.
+  assert.ok(
+    actions.some((pattern) => matches(pattern, 'summary:chat:-1001234567890:auto')),
+    "nothing is listening for summary:chat:<id>:auto"
+  );
+});
+
 test('no button can outgrow the 64-byte callback_data cap', () => {
   // Telegram rejects the whole sendMessage, so an over-long button does not
   // degrade — it takes the entire screen with it. The dangerous ones are the
