@@ -92,6 +92,7 @@ test('deleteUserData removes personal data, keeps the subscription, and anonymiz
   db.setUserFilters(603, { keywords: ['x'], categories: [] });
   db.setScheduledDigest({ chatId: -603, userId: 603, hourUtc: 9 });
   db.incrementSummaryUsage(603);
+  db.recordSummaryRead(603, -603);
   db.logEvent('summary_requested', { userId: 603, chatId: -603 });
   db.createSubscription({
     userId: 603,
@@ -114,6 +115,11 @@ test('deleteUserData removes personal data, keeps the subscription, and anonymiz
   assert.equal(db.db.prepare('SELECT COUNT(*) c FROM chat_members WHERE user_id = 603').get().c, 0);
   assert.equal(db.db.prepare('SELECT COUNT(*) c FROM scheduled_digests WHERE user_id = 603').get().c, 0);
   assert.equal(db.getSummaryUsageToday(603), 0);
+  assert.equal(
+    db.db.prepare('SELECT COUNT(*) c FROM summary_reads WHERE user_id = 603').get().c,
+    0,
+    'when they last read a summary is a usage counter, and goes with the rest of them'
+  );
 
   assert.equal(
     db.db.prepare('SELECT COUNT(*) c FROM digest_cache WHERE chat_id = -603').get().c,

@@ -168,6 +168,17 @@ db.exec(`
     PRIMARY KEY (user_id, chat_id, message_id)
   );
 
+  -- When a summary was last actually delivered to a user for a chat, so
+  -- /summary with no argument can cover "since you last checked" instead of
+  -- making the user guess an hour count. No foreign key on chat_id: a channel
+  -- is a synthetic id with no chats row, exactly as in summary_feedback.
+  CREATE TABLE IF NOT EXISTS summary_reads (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    chat_id INTEGER NOT NULL,
+    delivered_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, chat_id)
+  );
+
   -- What the AI cost us today. Keyed by UTC date, the same way daily_usage is,
   -- so it rolls over at 00:00 UTC with no job to run and nothing to reset.
   CREATE TABLE IF NOT EXISTS ai_usage (
@@ -922,6 +933,30 @@ function incrementSummaryUsage(userId) {
   ).run(userId, today);
 }
 
+/**
+ * Hours since this user last had a summary of this chat delivered, or null if
+ * they never have. The elapsed time is computed in SQL rather than by parsing
+ * delivered_at in JS: SQLite writes a naive "YYYY-MM-DD HH:MM:SS" that
+ * Date.parse() reads as LOCAL time, which is silently correct on a UTC box and
+ * wrong everywhere else — the same trap documented at the top of payments.js.
+ */
+function getHoursSinceLastSummary(userId, chatId) {
+  const row = db
+    .prepare(
+      `SELECT (julianday('now') - julianday(delivered_at)) * 24 AS hours
+       FROM summary_reads WHERE user_id = ? AND chat_id = ?`
+    )
+    .get(userId, chatId);
+  return row ? row.hours : null;
+}
+
+function recordSummaryRead(userId, chatId) {
+  db.prepare(
+    `INSERT INTO summary_reads (user_id, chat_id, delivered_at) VALUES (?, ?, datetime('now'))
+     ON CONFLICT(user_id, chat_id) DO UPDATE SET delivered_at = excluded.delivered_at`
+  ).run(userId, chatId);
+}
+
 function getScheduledDigest(chatId, userId) {
   return db.prepare('SELECT * FROM scheduled_digests WHERE chat_id = ? AND user_id = ?').get(chatId, userId);
 }
@@ -1088,6 +1123,7 @@ function deleteUserData(userId) {
     db.prepare('DELETE FROM chat_members WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM scheduled_digests WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM daily_usage WHERE user_id = ?').run(userId);
+    db.prepare('DELETE FROM summary_reads WHERE user_id = ?').run(userId);
     db.prepare('UPDATE events SET user_id = NULL WHERE user_id = ?').run(userId);
 
     // Cached summaries were generated from text that included this user's
@@ -1465,6 +1501,8 @@ module.exports = {
   searchMessages,
   getSummaryUsageToday,
   incrementSummaryUsage,
+  getHoursSinceLastSummary,
+  recordSummaryRead,
   getScheduledDigest,
   setScheduledDigest,
   disableScheduledDigest,

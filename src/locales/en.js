@@ -153,7 +153,11 @@ module.exports = {
       "🛑 I've hit my daily limit for writing summaries, so I'm not making any more today.\n\n" +
       'This resets at 00:00 UTC. Everything else — /find, /filter, /channels — still works.',
     noActivity: 'No activity in the last {hours}h to summarize.',
-    header: '📝 *Summary — last {hours}h*',
+    header: '📝 *Summary — last {hours}h*{autoNote}',
+    // Appended to the header when the window was chosen for the user rather
+    // than typed by them, so "last 7h" is never an unexplained number.
+    autoNoteSinceLast: ' (since your last summary)',
+    autoNoteFirstTime: ' (first summary here — showing the last 24h)',
     // A busy window is summarized from its most recent messages only. Without
     // this the result looks exactly like a summary of the whole period.
     truncatedNote: '_Busy window — this covers the most recent {shown} of {total} messages._',
