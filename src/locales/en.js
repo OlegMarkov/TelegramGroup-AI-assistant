@@ -157,7 +157,7 @@ module.exports = {
     // Appended to the header when the window was chosen for the user rather
     // than typed by them, so "last 7h" is never an unexplained number.
     autoNoteSinceLast: ' (since your last summary)',
-    autoNoteFirstTime: ' (first summary here — showing the last 24h)',
+    autoNoteFirstTime: ' (first summary here)',
     // A busy window is summarized from its most recent messages only. Without
     // this the result looks exactly like a summary of the whole period.
     truncatedNote: '_Busy window — this covers the most recent {shown} of {total} messages._',
