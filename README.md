@@ -8,6 +8,7 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 - `/help` — the full guide: how to connect a group or a channel, what each command does, and what the free plan covers
 - `/summary [hours]` — AI-generated summary of a group's recent activity. Run inside a group to summarize it directly, or in DM to pick from your linked groups.
 - `/find <query>` — search a group's message history (or across all your linked groups, from DM). Words match as prefixes like filter keywords do (`release` finds `releases`, `ученые` finds `учёные`), results are ranked by relevance, ten at a time with a "more" button, and each links back to the original message. A query with punctuation in it (`50%`, `a_b.txt`) is matched literally, and a query that matches no whole words falls back to plain substring search. The full-text index lives in SQLite FTS5 (`messages_fts`), kept in sync by triggers; on a SQLite build without FTS5 the bot drops the triggers and uses substring search throughout
+- `/ask <question>` — premium: answers a question from one chat's recent messages ("what did we decide about the venue?"). In a group it answers about that group; in DM it asks which chat. It reads **only the window a summary may cover** (72h), so what reaches DeepSeek is what a summary already sends, plus the question — widening that to the full 90-day history would be a change to PRIVACY.md first. Answers are never cached, so they are capped at 30 a day per person (`maxQuestionsPerDay`)
 - `/filter` — pick topics, and add keywords of your own, that get highlighted as a separate "matches your filters" block in summaries. Topics are toggles and free for everyone; keywords are a second screen (1 on the free plan, 20 with premium) where ➕ takes a whole list in one message (one per line or comma separated, phrases included) and 🗑 removes whatever you tick. Keywords match as stems, so `release` also finds `releases`
 - `/channels` — follow public Telegram channels and summarize them alongside your groups (1 on the free plan, 20 with premium). The list is a keyboard: tap channels to select them, 🗑 removes the selection, ➕ asks for the next one by @name or link. `/addchannel` and `/removechannel` still take a handle directly.
 - `/digest` — premium: configure an automatic **daily or weekly** digest, delivered by DM at a chosen hour. Set a timezone once and all 24 hours are offered in your own clock; leave it unset and the original four UTC hours are still what you get
@@ -48,6 +49,7 @@ Expiry reminders cover trials — the last day is the best moment there will eve
 | Public channels you can summarize | 1 | 20 |
 | Filter keywords that match | 1 | 20 |
 | Keyword alerts by DM | ❌ | ✅ |
+| `/ask` questions per day | ❌ | 30 |
 | Scheduled daily/weekly digest (`/digest`) | ❌ | ✅ |
 
 A first `/start` gives **7 days of premium** (see [Free trial](#free-trial)). Topic categories in `/filter` are free on both plans.

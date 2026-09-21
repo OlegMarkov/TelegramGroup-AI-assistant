@@ -82,6 +82,7 @@ const PUBLIC_COMMANDS = [
   'help',
   'summary',
   'find',
+  'ask',
   'filter',
   'channels',
   'digest',

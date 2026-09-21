@@ -262,6 +262,10 @@ addColumnIfMissing('scheduled_digests', 'cadence', `TEXT NOT NULL DEFAULT 'daily
 // Ignored entirely for a daily row.
 addColumnIfMissing('scheduled_digests', 'weekday', 'INTEGER NOT NULL DEFAULT 1');
 
+// /ask questions per day. Every answer is an uncached AI call, so it is
+// counted and capped separately from summaries, which mostly hit the cache.
+addColumnIfMissing('daily_usage', 'ask_count', 'INTEGER NOT NULL DEFAULT 0');
+
 // One row per channel, no matter how many users follow it. Handles are stored
 // lowercased so @Durov and @durov cannot become two chats holding two copies
 // of the same content.
@@ -1075,6 +1079,22 @@ function incrementSummaryUsage(userId) {
   ).run(userId, today);
 }
 
+// /ask questions, counted beside summaries in the same daily row so they
+// reset at the same UTC midnight and go with /forgetme the same way.
+function getAskUsageToday(userId) {
+  const today = new Date().toISOString().slice(0, 10);
+  const row = db.prepare('SELECT ask_count FROM daily_usage WHERE user_id = ? AND date = ?').get(userId, today);
+  return row ? row.ask_count : 0;
+}
+
+function incrementAskUsage(userId) {
+  const today = new Date().toISOString().slice(0, 10);
+  db.prepare(
+    `INSERT INTO daily_usage (user_id, date, ask_count) VALUES (?, ?, 1)
+     ON CONFLICT(user_id, date) DO UPDATE SET ask_count = ask_count + 1`
+  ).run(userId, today);
+}
+
 /**
  * Hours since this user last had a summary of this chat delivered, or null if
  * they never have. The elapsed time is computed in SQL rather than by parsing
@@ -1645,6 +1665,8 @@ module.exports = {
   hasFullTextSearch,
   getSummaryUsageToday,
   incrementSummaryUsage,
+  getAskUsageToday,
+  incrementAskUsage,
   getHoursSinceLastSummary,
   recordSummaryRead,
   getScheduledDigest,
