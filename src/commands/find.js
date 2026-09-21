@@ -1,6 +1,14 @@
 const { searchMessages, getUserGroups, getAllowedUserChats, isChatWithinFreeLimit } = require('../services/database');
 const { getLimits } = require('../models/subscription');
-const { truncate, formatDate, isGroupChat, escapeMarkdown, splitForTelegram } = require('../utils/formatters');
+const {
+  truncate,
+  formatDate,
+  isGroupChat,
+  escapeMarkdown,
+  splitForTelegram,
+  messageLink,
+  NO_PREVIEW,
+} = require('../utils/formatters');
 const { t, allTranslations } = require('../utils/i18n');
 const { track, EVENTS } = require('../services/analytics');
 const logger = require('../utils/logger');
@@ -49,7 +57,10 @@ async function findHandler(ctx) {
     const chatLabel = m.chat_title ? `[${escapeMarkdown(m.chat_title)}] ` : '';
     const author = escapeMarkdown(m.username || t(lang, 'find.unknownAuthor'));
     const body = escapeMarkdown(truncate(m.text, 200));
-    return `${chatLabel}*${author}*\n${body}\n_${formatDate(m.created_at)}_`;
+    // A result is a quote out of context; the link is how you get the context.
+    const link = messageLink({ id: m.chat_id, username: m.chat_username }, m.message_id);
+    const open = link ? ` · [${t(lang, 'common.openLink')}](${link})` : '';
+    return `${chatLabel}*${author}*\n${body}\n_${formatDate(m.created_at)}_${open}`;
   });
 
   const body = `${t(lang, 'find.header', { query })}\n\n${lines.join('\n\n')}`;
@@ -65,10 +76,10 @@ async function findHandler(ctx) {
     // plain-text retry stays as the backstop — delivering search results
     // unformatted beats delivering nothing.
     try {
-      sent = await ctx.reply(part, { parse_mode: 'Markdown' });
+      sent = await ctx.reply(part, { parse_mode: 'Markdown', ...NO_PREVIEW });
     } catch (error) {
       logger.warn('Search results rejected with Markdown, resending as plain text', { error: error.message });
-      sent = await ctx.reply(part);
+      sent = await ctx.reply(part, NO_PREVIEW);
     }
   }
   return sent;

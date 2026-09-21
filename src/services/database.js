@@ -898,7 +898,7 @@ function searchMessages({ chatId, chatIds, query, limit = 20 }) {
   if (chatId) {
     return db
       .prepare(
-        `SELECT m.*, c.title as chat_title FROM messages m
+        `SELECT m.*, c.title as chat_title, c.username as chat_username FROM messages m
          JOIN chats c ON c.id = m.chat_id
          WHERE m.chat_id = ? AND m.text LIKE ? ESCAPE '\\'
          ORDER BY m.created_at DESC LIMIT ?`
@@ -911,7 +911,7 @@ function searchMessages({ chatId, chatIds, query, limit = 20 }) {
   const placeholders = chatIds.map(() => '?').join(',');
   return db
     .prepare(
-      `SELECT m.*, c.title as chat_title FROM messages m
+      `SELECT m.*, c.title as chat_title, c.username as chat_username FROM messages m
        JOIN chats c ON c.id = m.chat_id
        WHERE m.chat_id IN (${placeholders}) AND m.text LIKE ? ESCAPE '\\'
        ORDER BY m.created_at DESC LIMIT ?`

@@ -78,7 +78,33 @@ function isGroupChat(chat) {
   return Boolean(chat) && (chat.type === 'group' || chat.type === 'supergroup');
 }
 
+/**
+ * A link back to one message.
+ *
+ * A public group or channel has a username and a public permalink. A private
+ * supergroup has neither, but t.me/c/<id>/<message> works for anyone already in
+ * the chat — and every place this is shown only shows members their own chats.
+ * Anything else (a legacy group, an id that is not a supergroup) gets no link
+ * rather than a broken one.
+ *
+ * Usernames are Telegram's own [A-Za-z0-9_], so the result is safe inside a
+ * legacy-Markdown [label](url) without escaping.
+ */
+function messageLink(chat, messageId) {
+  if (!chat || !messageId) return null;
+  if (chat.username) return `https://t.me/${chat.username}/${messageId}`;
+  const id = String(chat.id);
+  return id.startsWith('-100') ? `https://t.me/c/${id.slice(4)}/${messageId}` : null;
+}
+
+// Send option for any message that may carry messageLink() links. Telegram
+// otherwise expands the first link into a preview card of some unrelated
+// message, pushing the summary or the results below the fold.
+const NO_PREVIEW = { link_preview_options: { is_disabled: true } };
+
 module.exports = {
+  messageLink,
+  NO_PREVIEW,
   escapeMarkdownV2,
   escapeMarkdown,
   normalizeModelMarkdown,

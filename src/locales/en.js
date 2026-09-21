@@ -37,6 +37,8 @@ module.exports = {
     noLinkedChats: 'You are not linked to any group chats yet. Add me to a group to get started.',
     cancel: 'Cancel',
     done: 'Done',
+    // Label of the link back to a quoted message, in /find and highlights.
+    openLink: 'open',
     chatFallback: 'Chat {id}',
     tooManyRequests: '⏳ Too many requests. Please try again in {seconds}s.',
     unclaimedMessage:

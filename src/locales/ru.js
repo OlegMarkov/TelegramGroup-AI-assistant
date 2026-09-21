@@ -37,6 +37,7 @@ module.exports = {
     noLinkedChats: 'Вы пока не связаны ни с одной группой. Добавьте меня в группу, чтобы начать.',
     cancel: 'Отмена',
     done: 'Готово',
+    openLink: 'открыть',
     chatFallback: 'Чат {id}',
     tooManyRequests: '⏳ Слишком много запросов. Попробуйте снова через {seconds} с.',
     unclaimedMessage:
