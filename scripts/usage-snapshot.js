@@ -89,7 +89,7 @@ if (sourceArg) {
 }
 
 const config = require('../src/config');
-const { db, getSummaryFeedbackCounts } = require('../src/services/database');
+const { db, getSummaryFeedbackCounts, getDigestSpread } = require('../src/services/database');
 const { getFunnelReport, getRetentionReport } = require('../src/services/analytics');
 
 if (!sourceLabel) sourceLabel = path.resolve(config.database.path);
@@ -226,14 +226,26 @@ ${table(
   )}`);
 }
 
+const spread = getDigestSpread();
+sections.push(`## Scheduled digests (right now)
+
+Current configuration, not events. "Same hour" is the case where several
+digests arrive bundled as one DM.
+
+${table(
+  ['enabled for', 'with 2+ sources', 'with 2+ in one hour', 'most per user'],
+  [[spread.users, spread.multi_source, spread.same_hour, spread.max_per_user]]
+)}`);
+
 sections.push(`## What is NOT in here
 
 Reaching for one of these means saying so rather than guessing:
 
 - **No message content, usernames or user ids.** Aggregates only, by design.
-- **No per-feature configuration counts** — how many people have a digest
-  scheduled right now, or follow more than one channel. The event log records
-  that they configured it once, never that they still have it.
+- **No other per-feature configuration counts** — scheduled digests above are
+  the one exception. How many people follow more than one channel, or have
+  keyword alerts on, is not here: the event log records that they configured
+  it once, never that they still have it.
 - **No support tickets, reviews or churn interviews.** Nothing in this repo
   records why anyone left.
 - **No revenue.** Stars payouts live in Telegram's statements, not here, and

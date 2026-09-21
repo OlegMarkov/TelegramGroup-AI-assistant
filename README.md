@@ -72,6 +72,12 @@ The cap itself stays at 200 until there is a measurement to move it against: `ai
 
 Note that a 168-hour cache entry cannot collide with a 24-hour one — the digest cache is keyed by `(chat_id, hours, language)` — so **every weekly digest is a fresh DeepSeek call**. That is correct, and worth knowing when reading `/spend`.
 
+## Several digests, one message
+
+Digests stay configured per (chat, user), each with its own hour and cadence, but everything that falls due for one person in the **same tick** is delivered as **one DM**: a header, then a section per source, one footer, and a pair of vote buttons per source labelled with its chat. A single due source is sent exactly as before.
+
+Each source is generated on its own. One that fails, or hits the spend cap, is left unmarked for its next tick without holding back the rest, and only the sources that were actually delivered are marked sent. A block (403) disables every digest in that bundle. `scheduled_digest_sent` is still recorded per source, and `digest_bundle_sent` carries the source count. `/stats` and the usage snapshot report how many people have 2+ digests in one hour, which is the only case bundling changes anything for.
+
 ## Summary feedback
 
 Every delivered summary carries a thumbs up / thumbs down pair, on the **last** part only — a long summary arrives as several messages, and a pair under each asks the same question four times.

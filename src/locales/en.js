@@ -332,6 +332,8 @@ module.exports = {
     disabled: '🔕 Daily digest disabled for this chat.',
     dailyHeader: '📅 *Daily digest — {chat}*',
     weeklyHeader: '📅 *Weekly digest — {chat}*',
+    // Above several digests that fell due in the same hour and arrive together.
+    bundleHeader: '📬 *Your digest — {count} chats*',
     switchToWeekly: '📆 Switch to weekly',
     switchToDaily: '📅 Switch back to daily',
     weeklyNote: '📆 Weekly, every {day}. It covers the whole past week.',

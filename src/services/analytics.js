@@ -35,6 +35,9 @@ const EVENTS = {
   FILTER_BLOCKED_LIMIT: 'filter_blocked_limit',
   DIGEST_CONFIGURED: 'digest_configured',
   SCHEDULED_DIGEST_SENT: 'scheduled_digest_sent',
+  // Several sources due in the same hour, delivered as one DM. sourceCount in
+  // the metadata; scheduled_digest_sent is still recorded once per source.
+  DIGEST_BUNDLE_SENT: 'digest_bundle_sent',
   // Churn of a kind that is otherwise invisible: someone blocked the bot, so
   // their digest was switched off rather than retried daily for ever.
   DIGEST_DISABLED_BLOCKED: 'digest_disabled_blocked',

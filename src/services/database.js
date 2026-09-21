@@ -1036,6 +1036,31 @@ function searchMessages({ chatId, chatIds, query, limit = 20, offset = 0 }) {
     .all(...ids, `%${escapeLikePattern(query)}%`, limit, offset);
 }
 
+/**
+ * How many people have scheduled digests right now, how many have more than
+ * one, and how many have more than one landing in the same hour — the only
+ * case bundling changes anything for. Configuration, not events: the event
+ * log says someone set a digest up once, never that they still have it.
+ */
+function getDigestSpread() {
+  return db
+    .prepare(
+      `SELECT
+         COUNT(*) AS users,
+         COALESCE(SUM(total >= 2), 0) AS multi_source,
+         COALESCE(SUM(busiest_hour >= 2), 0) AS same_hour,
+         COALESCE(MAX(total), 0) AS max_per_user
+       FROM (
+         SELECT user_id, SUM(n) AS total, MAX(n) AS busiest_hour FROM (
+           SELECT user_id, hour_utc, COUNT(*) AS n
+           FROM scheduled_digests WHERE enabled = 1
+           GROUP BY user_id, hour_utc
+         ) GROUP BY user_id
+       )`
+    )
+    .get();
+}
+
 function getSummaryUsageToday(userId) {
   const today = new Date().toISOString().slice(0, 10);
   const row = db.prepare('SELECT summary_count FROM daily_usage WHERE user_id = ? AND date = ?').get(userId, today);
@@ -1616,6 +1641,7 @@ module.exports = {
   countRecentMessages,
   MESSAGE_WINDOW_LIMIT,
   searchMessages,
+  getDigestSpread,
   hasFullTextSearch,
   getSummaryUsageToday,
   incrementSummaryUsage,
