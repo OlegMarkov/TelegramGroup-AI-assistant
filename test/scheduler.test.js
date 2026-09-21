@@ -15,7 +15,13 @@ process.env.REDIS_HOST = '127.0.0.1';
 process.env.REDIS_PORT = '1'; // guaranteed-closed port, fails fast instead of a long OS timeout
 
 const deepseek = require('../src/services/deepseek');
-deepseek.summarize = async () => 'stub summary';
+// A message containing FAIL_MARK makes generateDigest throw for that one
+// source, so a bundle test can exercise "one source fails, the rest ship"
+// without a separate stubbing seam into digest.js.
+deepseek.summarize = async (text) => {
+  if (String(text).includes('FAIL_MARK')) throw new Error('boom: this source failed to summarize');
+  return 'stub summary';
+};
 
 // scheduler.js sends DMs via a standalone Telegram client — stub it before
 // scheduler.js (which constructs one at module load) is required.
@@ -40,11 +46,11 @@ function telegramError(code, description, parameters) {
   return error;
 }
 
-Telegram.prototype.sendMessage = async function (chatId, text) {
+Telegram.prototype.sendMessage = async function (chatId, text, extra) {
   const queued = sendScript.get(chatId);
   const next = queued && queued.length > 0 ? queued.shift() : null;
   if (next) throw next;
-  sentMessages.push({ chatId, text });
+  sentMessages.push({ chatId, text, extra });
   return { message_id: 1 };
 };
 
@@ -103,6 +109,11 @@ test('runDueDigests DMs an active-subscription user whose digest is due', async 
 
   assert.equal(sentMessages.length, before + 1);
   assert.equal(sentMessages[sentMessages.length - 1].chatId, user.id);
+  assert.deepEqual(
+    sentMessages[sentMessages.length - 1].extra.link_preview_options,
+    { is_disabled: true },
+    'a scheduled digest disables the link preview, same as an on-demand summary'
+  );
 });
 
 test('runDueDigests skips a user whose subscription has lapsed', async () => {
@@ -447,4 +458,133 @@ test('the weekly window is not clamped to the premium lookback cap', () => {
   // week" heading.
   const { PREMIUM_LIMITS } = require('../src/models/subscription');
   assert.ok(PREMIUM_LIMITS.maxLookbackHours < 24 * 7, 'this test is meaningless if the cap already covers a week');
+});
+
+// --- bundling: everything due for one person in one tick, one DM ----------
+
+function digestRowsByUser(userId) {
+  return db.db.prepare('SELECT chat_id, enabled, last_sent_at FROM scheduled_digests WHERE user_id = ?').all(userId);
+}
+
+test('two sources due the same hour arrive as one DM, both marked sent, both counted', async () => {
+  setUpSubscriber(350, -350, 20, 'Alpha');
+  setUpSubscriber(350, -351, 20, 'Beta');
+  // setUpSubscriber creates a fresh subscription and user row each call; the
+  // second call for the same user must not blow up on the existing row.
+
+  const before = sentMessages.length;
+  await withUtcHour(20, () => runDueDigests({ sleep: async () => {} }));
+
+  const mine = sentMessages.slice(before).filter((m) => m.chatId === 350);
+  assert.equal(mine.length, 1, 'one DM for everything due this hour, not one per source');
+  assert.match(mine[0].text, /Your digest.*2 chats/s, 'the bundle header names how many chats it covers');
+  assert.match(mine[0].text, /Alpha/);
+  assert.match(mine[0].text, /Beta/);
+
+  const rows = digestRowsByUser(350);
+  assert.ok(rows.every((r) => r.enabled === 1 && r.last_sent_at), 'both rows are marked sent');
+
+  assert.equal(eventCount('digest_bundle_sent', 350), 1);
+  const bundleEvent = db.db
+    .prepare("SELECT metadata FROM events WHERE user_id = 350 AND event_type = 'digest_bundle_sent'")
+    .get();
+  assert.equal(JSON.parse(bundleEvent.metadata).sourceCount, 2);
+
+  // One scheduled_digest_sent per source, not one for the bundle as a whole.
+  assert.equal(eventCount('scheduled_digest_sent', 350), 2);
+});
+
+test('a bundle draws one feedback pair per source, labelled by chat', async () => {
+  setUpSubscriber(352, -360, 21, 'Gamma');
+  setUpSubscriber(352, -361, 21, 'Delta');
+
+  await withUtcHour(21, () => runDueDigests({ sleep: async () => {} }));
+
+  const mine = sentMessages.filter((m) => m.chatId === 352);
+  const sent = mine[mine.length - 1];
+  const rows = sent.extra.reply_markup.inline_keyboard;
+  assert.equal(rows.length, 2, 'one up/down pair per source');
+
+  const labels = rows.map((row) => row[0].text);
+  assert.ok(labels.some((l) => l.includes('Gamma')));
+  assert.ok(labels.some((l) => l.includes('Delta')));
+  // Each pair still votes on its own chat, not the bundle.
+  for (const [up, down] of rows) {
+    const chatIdInUp = up.callback_data.split(':')[2];
+    const chatIdInDown = down.callback_data.split(':')[2];
+    assert.equal(chatIdInUp, chatIdInDown);
+  }
+});
+
+test('a single due source still sends exactly as before, with no bundle header', async () => {
+  setUpSubscriber(353, -370, 22, 'Solo');
+
+  const before = sentMessages.length;
+  await withUtcHour(22, () => runDueDigests({ sleep: async () => {} }));
+
+  const mine = sentMessages.slice(before).filter((m) => m.chatId === 353);
+  assert.equal(mine.length, 1);
+  assert.doesNotMatch(mine[0].text, /Your digest/, 'a lone digest is not wrapped in a bundle header');
+  assert.match(mine[0].text, /Daily digest — Solo/);
+  assert.equal(eventCount('digest_bundle_sent', 353), 0);
+  assert.equal(eventCount('scheduled_digest_sent', 353), 1);
+});
+
+test('one source that fails to generate is left unmarked; the rest still ship', async () => {
+  const userId = 354;
+  setUpSubscriber(userId, -380, 23, 'Good');
+  setUpSubscriber(userId, -381, 23, 'Bad');
+  // Poisons only the Bad chat's transcript so its digest generation throws.
+  db.saveMessage({ chatId: -381, messageId: 2, userId, username: 'u' + userId, text: 'FAIL_MARK this one blows up' });
+
+  const before = sentMessages.length;
+  await withUtcHour(23, () => runDueDigests({ sleep: async () => {} }));
+
+  const mine = sentMessages.slice(before).filter((m) => m.chatId === userId);
+  assert.equal(mine.length, 1, 'the good source is still delivered');
+  assert.match(mine[0].text, /Good/);
+  assert.doesNotMatch(mine[0].text, /Your digest/, 'only one source actually shipped, so no bundle header');
+
+  const rows = digestRowsByUser(userId);
+  const good = rows.find((r) => r.chat_id === -380);
+  const bad = rows.find((r) => r.chat_id === -381);
+  assert.ok(good.last_sent_at, 'the delivered source is marked sent');
+  assert.equal(bad.last_sent_at, null, 'the failed source is left unmarked, so the next tick retries it');
+  assert.equal(bad.enabled, 1);
+});
+
+test('a 403 while delivering a bundle disables every source in it', async () => {
+  const userId = 355;
+  setUpSubscriber(userId, -390, 24, 'One');
+  setUpSubscriber(userId, -391, 24, 'Two');
+  scriptSends(userId, [telegramError(403, 'Forbidden: bot was blocked by the user')]);
+
+  await withUtcHour(24, () => runDueDigests({ sleep: async () => {} }));
+
+  const rows = digestRowsByUser(userId);
+  assert.ok(rows.every((r) => r.enabled === 0), 'both sources in the bundle are disabled by one block');
+  assert.equal(eventCount('digest_disabled_blocked', userId), 2, 'one event per disabled source');
+});
+
+test('getDigestSpread counts users, multi-source users, same-hour collisions and the busiest user', () => {
+  const before = db.getDigestSpread();
+
+  // One source only: counts toward users, not multi_source.
+  setUpSubscriber(360, -400, 1, 'Single');
+  // Two sources, different hours: multi_source, but not same_hour.
+  setUpSubscriber(361, -401, 2, 'DiffHourA');
+  setUpSubscriber(361, -402, 3, 'DiffHourB');
+  // Two sources, same hour: both multi_source and same_hour.
+  setUpSubscriber(362, -403, 4, 'SameHourA');
+  setUpSubscriber(362, -404, 4, 'SameHourB');
+  // Three sources, same hour: the busiest.
+  setUpSubscriber(363, -405, 5, 'Busy1');
+  setUpSubscriber(363, -406, 5, 'Busy2');
+  setUpSubscriber(363, -407, 5, 'Busy3');
+
+  const spread = db.getDigestSpread();
+  assert.equal(spread.users - before.users, 4, 'four distinct users configured digests');
+  assert.equal(spread.multi_source - before.multi_source, 3, 'users 361, 362 and 363 all have 2+ sources');
+  assert.equal(spread.same_hour - before.same_hour, 2, 'only 362 and 363 collide within one hour');
+  assert.equal(spread.max_per_user, 3, 'user 363 has the busiest single hour');
 });

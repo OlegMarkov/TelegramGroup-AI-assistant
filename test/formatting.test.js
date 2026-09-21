@@ -7,6 +7,9 @@ const {
   truncate,
   escapeMarkdown,
   normalizeModelMarkdown,
+  messageLink,
+  referralLink,
+  NO_PREVIEW,
 } = require('../src/utils/formatters');
 
 test('CommonMark bold from the model becomes Telegram bold', () => {
@@ -87,6 +90,42 @@ test('a single unbreakable line longer than the limit is still cut', () => {
   assert.ok(parts.length >= 3);
   for (const part of parts) assert.ok(part.length <= TELEGRAM_MAX_MESSAGE);
   assert.equal(parts.join(''), 'z'.repeat(10000));
+});
+
+test('messageLink builds a public permalink for a chat with a username', () => {
+  assert.equal(
+    messageLink({ id: -1001234567890, username: 'somepublicgroup' }, 42),
+    'https://t.me/somepublicgroup/42'
+  );
+});
+
+test('messageLink builds a t.me/c link for a private supergroup by its -100 id', () => {
+  // -100 plus the internal id: t.me/c/<id>/<message> works for anyone already
+  // in the chat, which the recipient is here.
+  assert.equal(messageLink({ id: -1001234567890, username: null }, 7), 'https://t.me/c/1234567890/7');
+});
+
+test('messageLink refuses a legacy group, which has neither a username nor a -100 id', () => {
+  assert.equal(messageLink({ id: -12345, username: null }, 5), null);
+});
+
+test('messageLink refuses without a chat or a message id', () => {
+  assert.equal(messageLink(null, 5), null);
+  assert.equal(messageLink({ id: -1001234567890 }, null), null);
+  assert.equal(messageLink({ id: -1001234567890 }, undefined), null);
+});
+
+test('referralLink names the group in the start payload', () => {
+  assert.equal(referralLink('mybot', -1009999), 'https://t.me/mybot?start=g-1009999');
+});
+
+test('referralLink is null without a bot username, which only a test lacks', () => {
+  assert.equal(referralLink(null, -1009999), null);
+  assert.equal(referralLink(undefined, -1009999), null);
+});
+
+test('NO_PREVIEW disables the link preview, not anything else', () => {
+  assert.deepEqual(NO_PREVIEW, { link_preview_options: { is_disabled: true } });
 });
 
 test('a realistic long channel digest splits into sendable parts', () => {

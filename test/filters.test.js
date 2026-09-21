@@ -549,6 +549,49 @@ test('a free plan is told why rather than silently ignored', async () => {
   assert.equal(db.db.prepare('SELECT alerts_enabled FROM users WHERE id = ?').get(user.id).alerts_enabled, 0);
 });
 
+test('toggling a topic category is counted, with which one and which direction', async () => {
+  const { EVENTS } = require('../src/services/analytics');
+  const user = newUser(827, 'Toggler');
+
+  function lastEvent() {
+    const row = db.db
+      .prepare('SELECT event_type, metadata FROM events WHERE user_id = ? ORDER BY id DESC LIMIT 1')
+      .get(user.id);
+    return { type: row.event_type, metadata: JSON.parse(row.metadata) };
+  }
+
+  await fireCallback('filter:category:Tech', { from: user, subscription: PREMIUM });
+  let last = lastEvent();
+  assert.equal(last.type, EVENTS.FILTER_CATEGORY_TOGGLED);
+  assert.deepEqual(last.metadata, { category: 'Tech', enabled: true });
+  assert.deepEqual(db.getUserFilters(user.id).categories, ['Tech']);
+
+  // Switching it back off is recorded the same way, in the other direction.
+  await fireCallback('filter:category:Tech', { from: user, subscription: PREMIUM });
+  last = lastEvent();
+  assert.equal(last.type, EVENTS.FILTER_CATEGORY_TOGGLED);
+  assert.deepEqual(last.metadata, { category: 'Tech', enabled: false });
+  assert.deepEqual(db.getUserFilters(user.id).categories, []);
+});
+
+test('a category that is not one of the five is rejected, not stored', async () => {
+  // callback_data is client-supplied, and the schema only bounds a category's
+  // length — a forged callback used to be stored and counted as a real toggle.
+  const { EVENTS } = require('../src/services/analytics');
+  const user = newUser(828, 'Forger');
+
+  const before = db.db.prepare('SELECT COUNT(*) c FROM events WHERE user_id = ?').get(user.id).c;
+  const ctx = await fireCallback('filter:category:Bogus', { from: user, subscription: PREMIUM });
+
+  assert.deepEqual(db.getUserFilters(user.id).categories, [], 'nothing was stored');
+  assert.equal(
+    db.db.prepare('SELECT COUNT(*) c FROM events WHERE user_id = ?').get(user.id).c,
+    before,
+    'no event was logged for an unknown category'
+  );
+  assert.equal(ctx.edits.length, 0, 'the screen was not redrawn either');
+});
+
 test('every button the filter screens draw has something listening to it', async () => {
   // The general form of the bug above. A callback_data with no registered
   // handler is invisible in review and silent in production: Telegram shows a
