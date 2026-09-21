@@ -62,6 +62,7 @@ const FREE_LIMITS = {
   maxGroups: 1,
   maxChannels: 1,
   maxKeywords: 1,
+  weeklySummary: false,
 };
 
 const PREMIUM_LIMITS = {
@@ -71,6 +72,10 @@ const PREMIUM_LIMITS = {
   maxGroups: Infinity,
   maxChannels: 20,
   maxKeywords: MAX_KEYWORDS,
+  // /summary week: the 168h window a weekly digest covers, on demand. A named
+  // option rather than a higher maxLookbackHours, which would widen what every
+  // typed number can pull — that cap is the spend and abuse control.
+  weeklySummary: true,
 };
 
 /**

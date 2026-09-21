@@ -81,7 +81,7 @@ module.exports = {
       'messages that mention or reply to me.\n' +
       '📢 *Channels* — /channels follows any public channel. Nothing to install, and no group required.\n\n' +
       '*Day to day*\n' +
-      '📝 /summary — what happened recently. Add hours to look further back, like `/summary 12`. ' +
+      '📝 /summary — what happened recently. Add hours to look further back, like `/summary 12`, or `/summary week` with premium. ' +
       'In a group it summarizes that group; in DM I ask which chat you mean.\n' +
       '🔎 /find <words> — search everything I have stored for your groups, e.g. `/find deploy schedule`. ' +
       'Captions on photos and files count too. ' +
@@ -145,7 +145,7 @@ module.exports = {
     blockedDailyLimit:
       "You've used your {limit} free summaries for today. " +
       '⭐ /subscribe for unlimited summaries, longer lookback, and daily digests.',
-    capNotePremium: ' ({hours}h is the max lookback)',
+    capNotePremium: ' ({hours}h is the max lookback — /summary week covers the past 7 days)',
     capNoteFree: ' (capped to {hours}h on the free plan — /subscribe for up to {maxHours}h)',
     working: '⏳ Looking at the last {hours}h of activity...{capNote}',
     failed: 'Sorry, I could not generate a summary right now. Please try again shortly.',
@@ -160,6 +160,9 @@ module.exports = {
     // than typed by them, so "last 7h" is never an unexplained number.
     autoNoteSinceLast: ' (since your last summary)',
     autoNoteFirstTime: ' (first summary here)',
+    weekNote: ' (the past week)',
+    weekPremiumOnly:
+      'A summary of the whole past week is a premium feature. /subscribe to unlock it, or send /summary for the last {hours}h.',
     // A busy window is summarized from its most recent messages only. Without
     // this the result looks exactly like a summary of the whole period.
     truncatedNote: '_Busy window — this covers the most recent {shown} of {total} messages._',

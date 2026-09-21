@@ -43,7 +43,7 @@ Expiry reminders cover trials — the last day is the best moment there will eve
 | | Free | Premium |
 |---|---|---|
 | `/summary` calls per day | 3 | Unlimited |
-| Lookback window | up to 24h | up to 72h |
+| Lookback window | up to 24h | up to 72h, or the past week with `/summary week` |
 | Groups you can run commands in | 1 | Unlimited |
 | Public channels you can summarize | 1 | 20 |
 | Filter keywords that match | 1 | 20 |
@@ -64,7 +64,7 @@ Limits are defined in [`src/models/subscription.js`](src/models/subscription.js)
 
 A digest can be **daily** or **weekly**. Weekly rows carry a weekday and are matched only on it, by `strftime('%w')` inside `getDueScheduledDigests` — the per-hour `last_sent_at` guard is unchanged, so a retried tick still cannot double-send. Both columns are added with `addColumnIfMissing` and default to daily, so every existing row behaves exactly as before with no backfill.
 
-A weekly digest looks back **168 hours** and is deliberately **exempt** from `PREMIUM_LIMITS.maxLookbackHours` (72). That cap is a spend and abuse control on `/summary`, where anyone can type a number; a weekly digest is a schedule configured once that fires at most weekly, and a week *is* the feature — clamping it would deliver three days under a "past week" heading. Raising the cap instead would also raise what every on-demand summary can pull, which is what it exists to prevent.
+A weekly digest looks back **168 hours** and is deliberately **exempt** from `PREMIUM_LIMITS.maxLookbackHours` (72). That cap is a spend and abuse control on `/summary`, where anyone can type a number; a weekly digest is a schedule configured once that fires at most weekly, and a week *is* the feature — clamping it would deliver three days under a "past week" heading. Raising the cap instead would also raise what every on-demand summary can pull, which is what it exists to prevent. `/summary week` gives premium the same window on demand for the same reason: it is a named option gated on `weeklySummary`, not a higher cap, so `/summary 168` is still clamped to 72h. It shares the weekly digest's `(chat, 168, language)` cache entry.
 
 **The 200-message cap is no longer silent.** `generateDigest` reports `totalAvailable` and `truncated`, and both the on-demand and scheduled paths add a line to the header saying the summary covers the most recent N of M. The note is assembled per request and never enters the cached summary text — whether a window was cut depends on the window, and the cached text is shared. Weekly digests make this fire routinely, which is why it landed first.
 

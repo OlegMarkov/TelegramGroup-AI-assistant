@@ -27,12 +27,20 @@ const logger = require('../utils/logger');
 const DEFAULT_HOURS = 24;
 const ABSOLUTE_MAX_HOURS = 168; // sanity ceiling before per-plan clamping
 
+// "/summary week" — premium's on-demand twin of the weekly digest. It is its
+// own option rather than "/summary 168" because the numeric path stays clamped
+// to maxLookbackHours, and it shares the weekly digest's 168h cache entry.
+const WEEK = 'week';
+const WEEK_HOURS = 168;
+const WEEK_WORDS = ['week', 'неделя', 'неделю'];
+
 // null means "no argument given", and is resolved per (user, chat) from
 // summary_reads much later, in buildAndSendSummary. An explicit but unusable
 // number still falls back to DEFAULT_HOURS: "/summary banana" asked for a
 // number and got it wrong, which is a different thing from not asking.
 function parseHours(args) {
   if (args.length === 0) return null;
+  if (WEEK_WORDS.includes(String(args[0]).toLowerCase())) return WEEK;
   const n = Number(args[0]);
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_HOURS;
   return Math.min(n, ABSOLUTE_MAX_HOURS);
@@ -46,8 +54,15 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
   const isChannel = Boolean(chat && chat.source === 'channel');
 
   const isAuto = requestedHours === null;
+  const isWeek = requestedHours === WEEK;
 
-  track(EVENTS.SUMMARY_REQUESTED, { userId: requesterId, chatId, metadata: { auto: isAuto } });
+  // `requested` is what was typed, before any clamp: whether people keep asking
+  // for more than their plan allows is the question behind the lookback caps.
+  track(EVENTS.SUMMARY_REQUESTED, {
+    userId: requesterId,
+    chatId,
+    metadata: { auto: isAuto, requested: isAuto ? null : requestedHours },
+  });
 
   // Enforced here rather than only in the picker: callback_data is supplied by
   // the client, so a user whose subscription lapsed still has working buttons
@@ -74,6 +89,12 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
     return ctx.reply(t(lang, 'summary.chatPaused'));
   }
 
+  // Before the daily allowance, so asking for a premium window cannot use one.
+  if (isWeek && !limits.weeklySummary) {
+    track(EVENTS.SUMMARY_WEEK_BLOCKED_PREMIUM, { userId: requesterId, chatId });
+    return ctx.reply(t(lang, 'summary.weekPremiumOnly', { hours: limits.maxLookbackHours }));
+  }
+
   const usageToday = getSummaryUsageToday(requesterId);
   if (usageToday >= limits.maxSummariesPerDay) {
     track(EVENTS.SUMMARY_BLOCKED_DAILY_LIMIT, { userId: requesterId, chatId });
@@ -95,13 +116,14 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
     // window from clock skew.
     rawHours = elapsed === null ? DEFAULT_HOURS : Math.max(1, Math.ceil(elapsed));
   } else {
-    rawHours = requestedHours;
+    rawHours = isWeek ? WEEK_HOURS : requestedHours;
   }
 
   // The very same clamp an explicit argument gets, reused rather than
   // duplicated: someone who has not asked for a fortnight is still capped at
-  // 24h or 72h by plan, and the note below tells them so.
-  const hours = Math.min(rawHours, limits.maxLookbackHours);
+  // 24h or 72h by plan, and the note below tells them so. The week option is
+  // the one exemption, already gated on the plan above.
+  const hours = isWeek ? WEEK_HOURS : Math.min(rawHours, limits.maxLookbackHours);
   const isPremium = Boolean(ctx.state.subscription);
   let capNote = '';
   if (hours < rawHours) {
@@ -165,9 +187,10 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
 
   // Which window this actually covered. Empty for an explicit argument: the
   // user typed the number and does not need it read back to them.
-  const autoNote = isAuto
-    ? t(lang, elapsed === null ? 'summary.autoNoteFirstTime' : 'summary.autoNoteSinceLast')
-    : '';
+  let autoNote = '';
+  if (isAuto) autoNote = t(lang, elapsed === null ? 'summary.autoNoteFirstTime' : 'summary.autoNoteSinceLast');
+  // "last 168h" is a number nobody typed; say what it means.
+  else if (isWeek) autoNote = t(lang, 'summary.weekNote');
 
   const body =
     `${t(lang, 'summary.header', { hours, autoNote })}${truncatedNote}\n\n` +
@@ -262,14 +285,19 @@ async function summaryCallback(ctx) {
   // 'auto' is tested before the coercion on purpose: Number('auto') is NaN, so
   // `Number(hoursRaw) || DEFAULT_HOURS` would quietly turn every chat picked
   // off the list back into a fixed 24h window and defeat the default entirely.
-  const requestedHours = hoursRaw === 'auto' ? null : Number(hoursRaw) || DEFAULT_HOURS;
+  let requestedHours;
+  if (hoursRaw === 'auto') requestedHours = null;
+  else if (hoursRaw === WEEK) requestedHours = WEEK;
+  else requestedHours = Number(hoursRaw) || DEFAULT_HOURS;
   return buildAndSendSummary(ctx, chatId, requestedHours);
 }
 
 module.exports = (bot) => {
   bot.command('summary', summaryHandler);
   bot.hears(allTranslations('menu.summary'), summaryHandler);
-  bot.action(/^summary:chat:(-?\d+):(\d+|auto)$/, summaryCallback);
+  // The picker's hours slot is a number, 'auto' or 'week' — the last two are
+  // passed through as the words, see the callback_data in summaryHandler.
+  bot.action(/^summary:chat:(-?\d+):(\d+|auto|week)$/, summaryCallback);
 };
 
 module.exports.parseHours = parseHours;
