@@ -181,6 +181,9 @@ module.exports = {
     prompt: 'Send: /find <search term>',
     noResults: 'No results found for "{query}".',
     header: '🔎 Results for "{query}":',
+    headerMore: '🔎 More results for "{query}":',
+    more: 'More results ▸',
+    expired: 'That search has expired. Run /find again.',
     unknownAuthor: 'someone',
     noLinkedChats:
       'You are not linked to any group chats yet. Add me to a group to start searching its history.',

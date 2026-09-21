@@ -18,6 +18,7 @@ const EVENTS = {
   SUMMARY_BLOCKED_GROUP_LIMIT: 'summary_blocked_group_limit',
   FIND_REQUESTED: 'find_requested',
   FIND_BLOCKED_GROUP_LIMIT: 'find_blocked_group_limit',
+  FIND_NO_RESULTS: 'find_no_results',
   DIGEST_BLOCKED_PREMIUM: 'digest_blocked_premium',
   CHANNEL_ADDED: 'channel_added',
   CHANNEL_REMOVED: 'channel_removed',

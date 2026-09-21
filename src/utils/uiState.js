@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const { isMenuButtonText } = require('./i18n');
 
 // Ephemeral per-user state for a screen that is open right now: which rows are
@@ -95,7 +96,35 @@ function createSelectionStore(ttlMs = SELECTION_TTL_MS) {
   };
 }
 
+/**
+ * Short-lived values addressed by a random token, for a button that has to
+ * refer back to something too big for its 64-byte callback_data — a search
+ * query, say. A token that has expired or never existed resolves to null, and
+ * the button's handler says so rather than guessing.
+ */
+function createTokenStore(ttlMs = SELECTION_TTL_MS) {
+  const store = new Map(); // token -> { value, expiresAt }
+
+  return {
+    put(value) {
+      sweep(store);
+      const token = crypto.randomBytes(4).toString('hex');
+      store.set(token, { value, expiresAt: Date.now() + ttlMs });
+      return token;
+    },
+    get(token) {
+      const entry = store.get(token);
+      if (!entry || entry.expiresAt <= Date.now()) {
+        store.delete(token);
+        return null;
+      }
+      return entry.value;
+    },
+  };
+}
+
 module.exports = {
+  createTokenStore,
   armPrompt,
   clearPrompt,
   takePrompt,

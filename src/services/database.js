@@ -271,6 +271,90 @@ db.exec(`
 `);
 
 /**
+ * Full-text index over messages, for /find.
+ *
+ * Contentless (the text lives in messages, once) and kept in step by triggers,
+ * because messages are deleted from half a dozen places — retention sweeps,
+ * purges after removal, /forgetme, and FOREIGN KEY cascades from chats and
+ * users — and a trigger is the one thing none of them can forget to call.
+ * Cascades fire triggers too; that was checked, not assumed.
+ *
+ * Indexed with ё folded into е, the same folding filterMatcher applies, because
+ * unicode61's remove_diacritics does not treat them as one letter and a search
+ * for "ученые" would otherwise miss "учёные".
+ *
+ * The triggers make every INSERT into messages depend on FTS5 being compiled
+ * in. A database carried to a SQLite build without it would then refuse to
+ * store a single message, so on such a build the triggers are dropped and
+ * search falls back to LIKE. If they were ever dropped, the index is stale, so
+ * it is rebuilt the next time FTS5 is available.
+ */
+const FTS_TRIGGERS = ['messages_fts_insert', 'messages_fts_delete', 'messages_fts_update'];
+
+function ftsFold(column) {
+  return `replace(replace(${column}, 'ё', 'е'), 'Ё', 'Е')`;
+}
+
+function dropSearchTriggers() {
+  for (const name of FTS_TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${name}`);
+}
+
+function setupMessageSearch() {
+  const compiled = db.prepare(`SELECT sqlite_compileoption_used('ENABLE_FTS5') AS on_`).get().on_;
+  if (!compiled) {
+    dropSearchTriggers();
+    logger.warn('SQLite has no FTS5: /find falls back to substring search');
+    return false;
+  }
+
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+        text, content = '', contentless_delete = 1, tokenize = 'unicode61 remove_diacritics 2'
+      )
+    `);
+
+    const present = db
+      .prepare(`SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger' AND name IN (${FTS_TRIGGERS.map(() => '?').join(',')})`)
+      .get(...FTS_TRIGGERS).n;
+    if (present === FTS_TRIGGERS.length) return true;
+
+    db.exec('BEGIN');
+    try {
+      dropSearchTriggers();
+      db.exec('DELETE FROM messages_fts');
+      db.exec(`INSERT INTO messages_fts (rowid, text) SELECT id, ${ftsFold('text')} FROM messages`);
+      db.exec(`
+        CREATE TRIGGER messages_fts_insert AFTER INSERT ON messages BEGIN
+          INSERT INTO messages_fts (rowid, text) VALUES (new.id, ${ftsFold('new.text')});
+        END;
+        CREATE TRIGGER messages_fts_delete AFTER DELETE ON messages BEGIN
+          DELETE FROM messages_fts WHERE rowid = old.id;
+        END;
+        CREATE TRIGGER messages_fts_update AFTER UPDATE OF text ON messages BEGIN
+          DELETE FROM messages_fts WHERE rowid = old.id;
+          INSERT INTO messages_fts (rowid, text) VALUES (new.id, ${ftsFold('new.text')});
+        END;
+      `);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+    logger.info('Migration: built the full-text index for /find');
+    return true;
+  } catch (error) {
+    // Search is a convenience; storing messages is not. Never leave triggers
+    // behind that could make an INSERT fail.
+    dropSearchTriggers();
+    logger.error('Could not set up full-text search, falling back to substring search', { error: error.message });
+    return false;
+  }
+}
+
+const hasFullTextSearch = setupMessageSearch();
+
+/**
  * Comped rows were inserted by hand with a made-up charge id, and two of them
  * sharing that placeholder is exactly what stopped the index below from being
  * created on the live database.
@@ -892,31 +976,64 @@ function escapeLikePattern(query) {
   return String(query).replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
-function searchMessages({ chatId, chatIds, query, limit = 20 }) {
-  const like = `%${escapeLikePattern(query)}%`;
+/**
+ * The words of a query as an FTS5 expression, or null when it should be
+ * searched as a literal string instead.
+ *
+ * Every word becomes a quoted prefix term, ANDed: "release" finds "releases"
+ * and "релиз" finds "релиза", which is exactly how filter keywords already
+ * match, so the same word no longer behaves differently in /filter and /find.
+ * Words are letters and digits only, so nothing the user typed can reach
+ * FTS5's own query syntax.
+ *
+ * Anything else in the query — "50%", "a_b", "e-mail" — means the user is
+ * looking for those exact characters, which the tokenizer would throw away.
+ */
+const MAX_SEARCH_TERMS = 8;
 
-  if (chatId) {
-    return db
-      .prepare(
-        `SELECT m.*, c.title as chat_title, c.username as chat_username FROM messages m
-         JOIN chats c ON c.id = m.chat_id
-         WHERE m.chat_id = ? AND m.text LIKE ? ESCAPE '\\'
-         ORDER BY m.created_at DESC LIMIT ?`
-      )
-      .all(chatId, like, limit);
+function fullTextQuery(query) {
+  const text = String(query).trim();
+  if (!text || /[^\p{L}\p{N}\s]/u.test(text)) return null;
+  const words = text.toLowerCase().replace(/ё/g, 'е').split(/\s+/).filter(Boolean).slice(0, MAX_SEARCH_TERMS);
+  return words.length > 0 ? words.map((w) => `"${w}"*`).join(' ') : null;
+}
+
+const SEARCH_COLUMNS = 'm.*, c.title AS chat_title, c.username AS chat_username';
+
+/**
+ * Searches stored group messages, a page at a time.
+ *
+ * Full-text first, ranked by relevance and then recency. When that is not
+ * possible (no FTS5, or a literal query) or finds nothing at all, it falls
+ * back to the substring search it replaced, newest first — so a fragment from
+ * the middle of a word still finds what it used to. Which of the two answers
+ * is decided the same way on every page, so paging never switches mode.
+ */
+function searchMessages({ chatId, chatIds, query, limit = 20, offset = 0 }) {
+  const ids = chatId ? [chatId] : chatIds || [];
+  if (ids.length === 0) return [];
+  const inChats = `m.chat_id IN (${ids.map(() => '?').join(',')})`;
+
+  const match = hasFullTextSearch ? fullTextQuery(query) : null;
+  if (match) {
+    const fromFts = `FROM messages_fts f JOIN messages m ON m.id = f.rowid JOIN chats c ON c.id = m.chat_id
+                     WHERE messages_fts MATCH ? AND ${inChats}`;
+    const any = db.prepare(`SELECT 1 ${fromFts} LIMIT 1`).get(match, ...ids);
+    if (any) {
+      return db
+        .prepare(`SELECT ${SEARCH_COLUMNS} ${fromFts} ORDER BY f.rank, m.created_at DESC LIMIT ? OFFSET ?`)
+        .all(match, ...ids, limit, offset);
+    }
   }
 
-  if (!chatIds || chatIds.length === 0) return [];
-
-  const placeholders = chatIds.map(() => '?').join(',');
   return db
     .prepare(
-      `SELECT m.*, c.title as chat_title, c.username as chat_username FROM messages m
+      `SELECT ${SEARCH_COLUMNS} FROM messages m
        JOIN chats c ON c.id = m.chat_id
-       WHERE m.chat_id IN (${placeholders}) AND m.text LIKE ? ESCAPE '\\'
-       ORDER BY m.created_at DESC LIMIT ?`
+       WHERE ${inChats} AND m.text LIKE ? ESCAPE '\\'
+       ORDER BY m.created_at DESC LIMIT ? OFFSET ?`
     )
-    .all(...chatIds, like, limit);
+    .all(...ids, `%${escapeLikePattern(query)}%`, limit, offset);
 }
 
 function getSummaryUsageToday(userId) {
@@ -1499,6 +1616,7 @@ module.exports = {
   countRecentMessages,
   MESSAGE_WINDOW_LIMIT,
   searchMessages,
+  hasFullTextSearch,
   getSummaryUsageToday,
   incrementSummaryUsage,
   getHoursSinceLastSummary,
