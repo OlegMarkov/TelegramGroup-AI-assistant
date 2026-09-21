@@ -173,7 +173,18 @@ test('every command in the guide and the greeting is one the bot actually answer
   const known = new Set([...PUBLIC_COMMANDS, 'addchannel', 'removechannel', 'setprivacy', 'pause', 'resume']);
 
   for (const lang of SUPPORTED_LANGUAGES) {
-    const copy = [t(lang, 'help.text'), t(lang, 'start.greeting'), t(lang, 'onboarding.joined')].join('\n');
+    const copy = [
+      'help.text',
+      'start.welcome',
+      'start.welcomeBack',
+      'start.inGroup',
+      'onboarding.joined',
+      'onboarding.question',
+      'onboarding.channelNext',
+      'onboarding.adderWelcome',
+    ]
+      .map((key) => t(lang, key))
+      .join('\n');
     // Anchored to a word boundary, so "replies/mentions" reads as prose.
     for (const [, command] of copy.matchAll(/(?:^|[\s(])\/([a-z]+)/gm)) {
       assert.ok(known.has(command), `"/${command}" is offered in the ${lang} copy but is not a command`);

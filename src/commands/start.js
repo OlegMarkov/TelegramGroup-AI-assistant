@@ -1,7 +1,13 @@
 const { mainMenu } = require('../keyboards');
-const { FREE_LIMITS, PREMIUM_LIMITS, TRIAL_PLAN, TRIAL_DAYS } = require('../models/subscription');
-const { createSubscription, hasEverHadSubscription, getChatById } = require('../services/database');
+const { TRIAL_PLAN, TRIAL_DAYS } = require('../models/subscription');
+const {
+  createSubscription,
+  hasEverHadSubscription,
+  getChatById,
+  isUserLinkedToChat,
+} = require('../services/database');
 const { escapeMarkdown, formatDate } = require('../utils/formatters');
+const { needsOnboarding, askWhatToCatchUpOn, offerReferringGroup } = require('./onboarding');
 const logger = require('../utils/logger');
 
 const { t } = require('../utils/i18n');
@@ -58,9 +64,17 @@ function grantTrialIfDue(ctx) {
  */
 const REFERRAL_PAYLOAD = /^g(-\d{1,20})$/;
 
-function referringChatId(ctx) {
+function startPayload(ctx) {
   const text = (ctx.message && ctx.message.text) || '';
-  const match = (text.split(/\s+/)[1] || '').match(REFERRAL_PAYLOAD);
+  return text.split(/\s+/)[1] || '';
+}
+
+function hasPayload(ctx) {
+  return startPayload(ctx) !== '';
+}
+
+function referringChatId(ctx) {
+  const match = startPayload(ctx).match(REFERRAL_PAYLOAD);
   if (!match) return null;
   const chat = getChatById(Number(match[1]));
   return chat && chat.source !== 'channel' ? chat.id : null;
@@ -79,25 +93,36 @@ module.exports = (bot) => {
       // who happened to tap it; a granted trial is the "never been here" test.
       track(EVENTS.REFERRAL_STARTED, { userId: ctx.from.id, chatId: fromChat, metadata: { firstStart: trialGranted } });
     }
-    // The greeting is sent as Markdown, and a first name is free-form text: an
-    // unbalanced * or _ in it would make Telegram reject the whole message, so
-    // the very first thing a new user sees would be nothing at all.
+
+    // In a group this is either the "add to group" link arriving (a payload,
+    // and the bot's own join notice is already there) or somebody typing it.
+    // Neither is the place for a DM welcome and a reply keyboard.
+    if (ctx.chat && ctx.chat.type !== 'private') {
+      if (hasPayload(ctx)) return undefined;
+      return ctx.reply(t(lang, 'start.inGroup'));
+    }
+
+    // Sent as Markdown, and a first name is free-form text: an unbalanced * or
+    // _ in it would make Telegram reject the whole message, so the very first
+    // thing a new user sees would be nothing at all.
     const name = escapeMarkdown(ctx.from.first_name || '');
 
-    await ctx.reply(
-      t(lang, 'start.greeting', {
-        name,
-        freeSummaries: FREE_LIMITS.maxSummariesPerDay,
-        freeHours: FREE_LIMITS.maxLookbackHours,
-        // Sourced from the limits rather than written into the copy, so the
-        // greeting cannot quietly start advertising the wrong allowance.
-        freeChannels: FREE_LIMITS.maxChannels,
-        premiumChannels: PREMIUM_LIMITS.maxChannels,
-        freeKeywords: FREE_LIMITS.maxKeywords,
-        premiumKeywords: PREMIUM_LIMITS.maxKeywords,
-        trialNote,
-      }),
-      { parse_mode: 'Markdown', ...mainMenu(lang) }
-    );
+    // Somebody with chats already knows what the bot does, and gets the menu.
+    // Somebody with none gets one question instead of a feature list — see
+    // commands/onboarding. Two messages because a message carries one keyboard:
+    // the reply menu arrives with the first, the inline choice with the next.
+    const isNew = needsOnboarding(ctx.from.id);
+    await ctx.reply(t(lang, isNew ? 'start.welcome' : 'start.welcomeBack', { name, trialNote }), {
+      parse_mode: 'Markdown',
+      ...mainMenu(lang),
+    });
+
+    // Arriving from a group they are already in: that group's summary is the
+    // obvious first thing, so it is offered instead of the question.
+    if (fromChat !== null && (await offerReferringGroup(ctx, fromChat, isUserLinkedToChat(fromChat, ctx.from.id)))) {
+      return undefined;
+    }
+    if (isNew) return askWhatToCatchUpOn(ctx);
+    return undefined;
   });
 };

@@ -4,7 +4,7 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 
 ## Features
 
-- `/start` — welcome message and main menu
+- `/start` — a short welcome and the main menu; with nothing connected yet, one first-run question instead of a feature list (see [First run](#first-run))
 - `/help` — the full guide: how to connect a group or a channel, what each command does, and what the free plan covers
 - `/summary [hours]` — AI-generated summary of a group's recent activity. Run inside a group to summarize it directly, or in DM to pick from your linked groups.
 - `/find <query>` — search a group's message history (or across all your linked groups, from DM). Words match as prefixes like filter keywords do (`release` finds `releases`, `ученые` finds `учёные`), results are ranked by relevance, ten at a time with a "more" button, and each links back to the original message. A query with punctuation in it (`50%`, `a_b.txt`) is matched literally, and a query that matches no whole words falls back to plain substring search. The full-text index lives in SQLite FTS5 (`messages_fts`), kept in sync by triggers; on a SQLite build without FTS5 the bot drops the triggers and uses substring search throughout
@@ -27,7 +27,19 @@ A Telegram bot powered by [DeepSeek](https://api-docs.deepseek.com/) that summar
 
 Everything except the admin commands is published to Telegram's "/" menu at startup by `publishCommandMenu()` in [`src/bot.js`](src/bot.js), in each supported language, with descriptions from the `commands.*` translations. `/stats`, `/refund`, `/grant` and `/revoke` are left out on purpose, and reply with nothing at all to a non-admin: not advertising them is what keeps their existence undiscoverable.
 
-The user-facing copy lives entirely in [`src/locales/en.js`](src/locales/en.js) and [`src/locales/ru.js`](src/locales/ru.js). Every limit it quotes is interpolated from `FREE_LIMITS` / `PREMIUM_LIMITS` rather than typed into the sentence, so the instructions cannot drift from what the code actually allows. Tests in [`test/i18n.test.js`](test/i18n.test.js) hold the two locales to the same keys and placeholders, check that every command named in the greeting or the guide is one the bot really answers, and check that the guide still fits in a single Telegram message with balanced Markdown.
+The user-facing copy lives entirely in [`src/locales/en.js`](src/locales/en.js) and [`src/locales/ru.js`](src/locales/ru.js). Every limit it quotes is interpolated from `FREE_LIMITS` / `PREMIUM_LIMITS` rather than typed into the sentence, so the instructions cannot drift from what the code actually allows. Tests in [`test/i18n.test.js`](test/i18n.test.js) hold the two locales to the same keys and placeholders, check that every command named in the welcome, the first-run copy or the guide is one the bot really answers, and check that the guide still fits in a single Telegram message with balanced Markdown.
+
+## First run
+
+A new user has nothing to summarize yet, and a list of seven commands does not change that. So `/start` sends a two-line welcome with the main menu, and — for anyone with no group and no channel connected — one question: **what do you want to catch up on?** ([`src/commands/onboarding.js`](src/commands/onboarding.js))
+
+- **💬 A group** — an "Add me to a group" button (`t.me/<bot>?startgroup=…`, Telegram's own group picker). When the bot lands, whoever added it gets a DM saying so, and that the first summary needs people to talk first: the bot cannot read what was said before it joined. If Telegram reports the bot cannot see every message (`can_read_all_group_messages` false in `getMe`) and it was not made an admin, the DM says to make it one. At most one such DM per group a day, so removing and re-adding it is not a way to spam someone.
+- **📢 A public channel** — send its @name or link; it is followed and summarized on the spot, over the plan's whole lookback. Both steps are the ordinary `addChannelFromInput` and `buildAndSendSummary`, so the channel allowance, the daily summary allowance and the AI budget all apply unchanged. A channel that cannot be read ends on the choice again rather than on an error.
+- **👀 An example** — a static, clearly labelled made-up summary. No AI call.
+
+Who gets the question is decided by the empty state rather than a "seen it" flag: it stays right for someone who ran `/start` twice without choosing, and stops as soon as there is anything to summarize. Someone arriving through a group summary's referral link who is already in that group gets that group's summary offered instead. `/help` is still the full reference, and `/start` typed in a group gets one line rather than the DM welcome.
+
+`/stats` and the usage snapshot report **activation** — of the people whose first `/start` was at least a day ago, how many completed a summary within 24h — and how many users chose each path (`onboarding_path_chosen`).
 
 ## Free trial
 
@@ -351,7 +363,7 @@ src/
 ├── bot.js            Bot initialization & launch
 ├── config.js         Environment variables
 ├── commands/         One module per feature, registered by name in bot.js (start, help, summary, find, ask, filter,
-│                     channel, subscribe, status, feedback, digest, stats, admin, broadcast, moderation,
+│                     onboarding, channel, subscribe, status, feedback, digest, stats, admin, broadcast, moderation,
 │                     privacy incl. /forgetme, language) plus fallback, registered last
 ├── locales/           Translations (en, ru)
 ├── keyboards/         Inline/reply keyboards

@@ -6,10 +6,16 @@ const {
   getRetentionCurve,
   getWeeklyCohorts,
   getDailyActiveUsers,
+  getActivation,
+  getOnboardingPaths,
 } = require('./database');
 
 const EVENTS = {
   USER_STARTED: 'user_started',
+  // Which first-run path someone tapped on /start: 'group', 'channel' or
+  // 'example' in metadata.path. Activation (a first summary within a day) is
+  // the outcome it is read against.
+  ONBOARDING_PATH_CHOSEN: 'onboarding_path_chosen',
   HELP_VIEWED: 'help_viewed',
   CHAT_LINKED: 'chat_linked',
   SUMMARY_REQUESTED: 'summary_requested',
@@ -128,4 +134,9 @@ function getRetentionReport({ cohortWeeks = 6, activeDays = 14 } = {}) {
   };
 }
 
-module.exports = { EVENTS, track, getFunnelReport, getRetentionReport };
+/** A first summary within a day of first /start, and which first-run path people took. */
+function getActivationReport(sinceDays) {
+  return { ...getActivation(sinceDays), paths: getOnboardingPaths(sinceDays) };
+}
+
+module.exports = { EVENTS, track, getFunnelReport, getRetentionReport, getActivationReport };
