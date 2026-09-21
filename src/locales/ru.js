@@ -317,6 +317,7 @@ module.exports = {
     disabled: '🔕 Ежедневный дайджест для этого чата выключен.',
     dailyHeader: '📅 *Ежедневный дайджест — {chat}*',
     weeklyHeader: '📅 *Недельный дайджест — {chat}*',
+    bundleHeader: '📬 *Ваш дайджест — чатов: {count}*',
     switchToWeekly: '📆 Переключить на раз в неделю',
     switchToDaily: '📅 Вернуть ежедневный',
     weeklyNote: '📆 Раз в неделю, по {day}. Охватывает всю прошедшую неделю.',

@@ -1,6 +1,6 @@
 const config = require('../config');
 const { getFunnelReport, getRetentionReport } = require('../services/analytics');
-const { getAppState, getSummaryFeedbackCounts } = require('../services/database');
+const { getAppState, getSummaryFeedbackCounts, getDigestSpread } = require('../services/database');
 const { describeBudget } = require('../services/aiBudget');
 
 const DEFAULT_DAYS = 30;
@@ -59,6 +59,7 @@ async function statsHandler(ctx) {
   const backedUpAgo =
     Number.isFinite(backedUpAt) && backedUpAt > 0 ? Math.round((Date.now() - backedUpAt) / 3600000) : null;
 
+  const spread = getDigestSpread();
   const budget = describeBudget();
   const budgetLine =
     budget.hardLimit === null
@@ -74,6 +75,10 @@ async function statsHandler(ctx) {
       backedUpAgo === null
         ? '💾 *Off-site backup*: never (not configured?)'
         : `💾 *Off-site backup*: ${backedUpAgo}h ago${backedUpAgo > 48 ? ' ⚠️' : ''}`,
+      // Right now, not in the window: whether anyone has enough digests for
+      // bundling several into one DM to matter.
+      `📅 *Digests*: ${spread.users} users, ${spread.multi_source} with 2+, ` +
+        `${spread.same_hour} with 2+ in one hour, max ${spread.max_per_user}`,
     ].join('\n')
   );
 

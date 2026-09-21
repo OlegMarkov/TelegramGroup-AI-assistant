@@ -16,7 +16,7 @@ const {
   getAppState,
   setAppState,
 } = require('./database');
-const { splitForTelegram, NO_PREVIEW } = require('../utils/formatters');
+const { splitForTelegram, truncate, NO_PREVIEW } = require('../utils/formatters');
 const { createSender, isBlockedError, isBadRequestError } = require('../utils/telegramSend');
 const { SpendCapReachedError } = require('./aiBudget');
 const { feedbackKeyboard } = require('../commands/feedback');
@@ -64,6 +64,169 @@ async function registerRepeatableTick() {
   );
 }
 
+// Between the sources of a bundled digest. A heading alone does not separate
+// them well enough once each summary has theme headings of its own.
+const SECTION_BREAK = '\n\n— — —\n\n';
+
+// Long group titles would crowd the vote buttons of a bundle off the screen.
+const VOTE_LABEL_CHARS = 24;
+
+function renderSection(lang, { entry, result }) {
+  const truncatedNote = result.truncated
+    ? `\n${t(lang, 'summary.truncatedNote', { shown: result.messageCount, total: result.totalAvailable })}`
+    : '';
+  const header =
+    entry.cadence === 'weekly'
+      ? t(lang, 'digest.weeklyHeader', { chat: entry.chat_title })
+      : t(lang, 'digest.dailyHeader', { chat: entry.chat_title });
+  return `${header}${truncatedNote}\n\n${result.summaryText}${result.highlightBlock}`;
+}
+
+/**
+ * Votes for a bundle: one pair per source, labelled with its chat, since a
+ * vote is about one chat's summary and the whole point of the feedback is to
+ * find out which chats produce bad ones.
+ */
+function bundleFeedbackKeyboard(lang, sections) {
+  const rows = sections.map(({ entry, hours }) => {
+    const [up, down] = feedbackKeyboard(lang, { chatId: entry.chat_id, hours }).reply_markup.inline_keyboard[0];
+    return [{ ...up, text: `${up.text} ${truncate(entry.chat_title || '', VOTE_LABEL_CHARS)}`.trim() }, down];
+  });
+  return { reply_markup: { inline_keyboard: rows } };
+}
+
+async function deliverDigest(sender, userId, body, keyboard) {
+  const parts = splitForTelegram(body);
+
+  for (const [index, part] of parts.entries()) {
+    // Last part only, same as the on-demand path.
+    const extra = { ...NO_PREVIEW, ...(index === parts.length - 1 ? keyboard : {}) };
+
+    await sender.send(async () => {
+      // Same two hazards as the on-demand path: a digest can exceed
+      // Telegram's 4096-character limit, and model output can carry
+      // unbalanced Markdown. Either one otherwise loses the whole digest.
+      try {
+        await telegram.sendMessage(userId, part, { parse_mode: 'Markdown', ...extra });
+      } catch (sendError) {
+        // Only a 400 means "I could not parse that". A block, a rate limit
+        // or a dropped connection would fail identically as plain text, so
+        // hand those back to the sender, which knows what to do with them
+        // and would otherwise lose the formatting for no reason.
+        if (!isBadRequestError(sendError)) throw sendError;
+
+        logger.warn('Digest part rejected with Markdown, resending as plain text', {
+          userId,
+          error: sendError.message,
+        });
+        await telegram.sendMessage(userId, part, extra);
+      }
+    });
+  }
+}
+
+/**
+ * Everything due for one person this hour, delivered as ONE message.
+ *
+ * Someone with five groups and ten channels on the same hour used to get
+ * fifteen DMs in a row. Each source keeps its own hour and cadence — that is a
+ * real choice people make, daily for a busy group and weekly for a quiet
+ * channel — and only what falls due in the same tick is bundled. One source
+ * alone is sent exactly as it always was.
+ *
+ * Each source is generated separately and can fail separately: one that throws
+ * is left unmarked for its next tick without holding back the others, and only
+ * the sources that went out are marked sent.
+ */
+async function runUserDigests(sender, userId, entries) {
+  const limits = getLimits(getActiveSubscription(userId));
+  if (!limits.scheduledDigests) {
+    logger.info(`Skipping digest for user ${userId}: subscription is not active`);
+    return;
+  }
+
+  const lang = normalizeLanguage(getUserLanguage(userId));
+  const sections = [];
+
+  for (const entry of entries) {
+    const hours = lookbackFor(entry);
+    try {
+      const result = await generateDigest(entry.chat_id, userId, hours, lang);
+      if (!result) {
+        // Nothing happened in the window. There is no digest to send, but the
+        // hour has been dealt with, so record it and move on.
+        markDigestSent(entry.chat_id, userId);
+        continue;
+      }
+      sections.push({ entry, hours, result });
+    } catch (error) {
+      // The daily AI budget is spent. Skip without marking the hour done, so
+      // the next tick can deliver it if an admin adds room.
+      if (error instanceof SpendCapReachedError) {
+        logger.warn('Skipping a scheduled digest: daily AI budget reached', {
+          chatId: entry.chat_id,
+          userId,
+          usage: error.usage,
+          limit: error.limit,
+        });
+        continue;
+      }
+      // Logged loudly enough to be findable by user id, and left enabled.
+      logger.error('Scheduled digest failed', { chatId: entry.chat_id, userId, error: error.message });
+    }
+  }
+
+  if (sections.length === 0) return;
+
+  // Same footer as the on-demand path, assembled per request rather than
+  // cached, and only when a group is in there.
+  const footer = sections.some((s) => !s.result.isChannel) ? `\n\n${t(lang, 'summary.footer')}` : '';
+  const bundled = sections.length > 1;
+  const body = bundled
+    ? `${t(lang, 'digest.bundleHeader', { count: sections.length })}\n\n` +
+      `${sections.map((s) => renderSection(lang, s)).join(SECTION_BREAK)}${footer}`
+    : `${renderSection(lang, sections[0])}${footer}`;
+  const keyboard = bundled
+    ? bundleFeedbackKeyboard(lang, sections)
+    : feedbackKeyboard(lang, { chatId: sections[0].entry.chat_id, hours: sections[0].hours });
+
+  try {
+    await deliverDigest(sender, userId, body, keyboard);
+  } catch (error) {
+    // A user who blocked the bot returns 403 on every send, for ever. Their
+    // digest stayed enabled, so the tick tried again the next day and every
+    // day after — invisible noise that grows with every user who leaves.
+    if (isBlockedError(error)) {
+      for (const { entry } of sections) {
+        disableScheduledDigest(entry.chat_id, userId, 'blocked');
+        track(EVENTS.DIGEST_DISABLED_BLOCKED, { userId, chatId: entry.chat_id });
+      }
+      logger.info('Disabled scheduled digests because the user blocked the bot', {
+        userId,
+        chatIds: sections.map((s) => s.entry.chat_id),
+      });
+      // Their data is untouched: blocking the bot is not a deletion request.
+      return;
+    }
+
+    // Everything else stays enabled and unmarked, so the next tick retries.
+    logger.error('Scheduled digest failed', {
+      userId,
+      chatIds: sections.map((s) => s.entry.chat_id),
+      error: error.message,
+    });
+    return;
+  }
+
+  // Only after the send actually succeeded. Marked any earlier and the
+  // per-hour guard would suppress the retry this failure should get.
+  for (const { entry } of sections) {
+    track(EVENTS.SCHEDULED_DIGEST_SENT, { userId, chatId: entry.chat_id });
+    markDigestSent(entry.chat_id, userId);
+  }
+  if (bundled) track(EVENTS.DIGEST_BUNDLE_SENT, { userId, metadata: { sourceCount: sections.length } });
+}
+
 async function runDueDigests({ sleep } = {}) {
   const hourUtc = new Date().getUTCHours();
   const due = getDueScheduledDigests(hourUtc);
@@ -72,112 +235,19 @@ async function runDueDigests({ sleep } = {}) {
   // than resetting for each one — which would pace nothing at all.
   const sender = createSender(sleep ? { sleep } : {});
 
+  const byUser = new Map();
   for (const entry of due) {
-    const subscription = getActiveSubscription(entry.user_id);
-    const limits = getLimits(subscription);
+    if (!byUser.has(entry.user_id)) byUser.set(entry.user_id, []);
+    byUser.get(entry.user_id).push(entry);
+  }
 
-    if (!limits.scheduledDigests) {
-      logger.info(`Skipping digest for user ${entry.user_id}: subscription is not active`);
-      continue;
-    }
-
+  // One person's failure never ends the loop. runUserDigests handles the
+  // failures it expects; this catches the ones it does not.
+  for (const [userId, entries] of byUser) {
     try {
-      const lang = normalizeLanguage(getUserLanguage(entry.user_id));
-      const hours = lookbackFor(entry);
-      const result = await generateDigest(entry.chat_id, entry.user_id, hours, lang);
-
-      if (!result) {
-        // Nothing happened in the window. There is no digest to send, but the
-        // hour has been dealt with, so record it and move on.
-        markDigestSent(entry.chat_id, entry.user_id);
-        continue;
-      }
-
-      // Same footer as the on-demand path, assembled per request rather than
-      // cached, and only for groups.
-      const footer = result.isChannel ? '' : `\n\n${t(lang, 'summary.footer')}`;
-      const truncatedNote = result.truncated
-        ? `\n${t(lang, 'summary.truncatedNote', { shown: result.messageCount, total: result.totalAvailable })}`
-        : '';
-      const header =
-        entry.cadence === 'weekly'
-          ? t(lang, 'digest.weeklyHeader', { chat: entry.chat_title })
-          : t(lang, 'digest.dailyHeader', { chat: entry.chat_title });
-
-      const body = `${header}${truncatedNote}\n\n${result.summaryText}${result.highlightBlock}${footer}`;
-
-      const parts = splitForTelegram(body);
-
-      for (const [index, part] of parts.entries()) {
-        // Last part only, same as the on-demand path.
-        const extra = {
-          ...NO_PREVIEW,
-          ...(index === parts.length - 1 ? feedbackKeyboard(lang, { chatId: entry.chat_id, hours }) : {}),
-        };
-
-        await sender.send(async () => {
-          // Same two hazards as the on-demand path: a digest can exceed
-          // Telegram's 4096-character limit, and model output can carry
-          // unbalanced Markdown. Either one otherwise loses the whole digest.
-          try {
-            await telegram.sendMessage(entry.user_id, part, { parse_mode: 'Markdown', ...extra });
-          } catch (sendError) {
-            // Only a 400 means "I could not parse that". A block, a rate limit
-            // or a dropped connection would fail identically as plain text, so
-            // hand those back to the sender, which knows what to do with them
-            // and would otherwise lose the formatting for no reason.
-            if (!isBadRequestError(sendError)) throw sendError;
-
-            logger.warn('Digest part rejected with Markdown, resending as plain text', {
-              userId: entry.user_id,
-              error: sendError.message,
-            });
-            await telegram.sendMessage(entry.user_id, part, extra);
-          }
-        });
-      }
-
-      track(EVENTS.SCHEDULED_DIGEST_SENT, { userId: entry.user_id, chatId: entry.chat_id });
-
-      // Only after the send actually succeeded. Marked any earlier and the
-      // per-hour guard would suppress the retry this failure should get.
-      markDigestSent(entry.chat_id, entry.user_id);
+      await runUserDigests(sender, userId, entries);
     } catch (error) {
-      // The daily AI budget is spent. Skip without marking the hour done, so
-      // the next tick can deliver it if an admin adds room — and without
-      // retrying inside this tick, which would just hit the same wall for
-      // every remaining recipient.
-      if (error instanceof SpendCapReachedError) {
-        logger.warn('Skipping a scheduled digest: daily AI budget reached', {
-          chatId: entry.chat_id,
-          userId: entry.user_id,
-          usage: error.usage,
-          limit: error.limit,
-        });
-        continue;
-      }
-
-      // A user who blocked the bot returns 403 on every send, for ever. Their
-      // digest stayed enabled, so the tick tried again the next day and every
-      // day after — invisible noise that grows with every user who leaves.
-      if (isBlockedError(error)) {
-        disableScheduledDigest(entry.chat_id, entry.user_id, 'blocked');
-        track(EVENTS.DIGEST_DISABLED_BLOCKED, { userId: entry.user_id, chatId: entry.chat_id });
-        logger.info('Disabled a scheduled digest because the user blocked the bot', {
-          chatId: entry.chat_id,
-          userId: entry.user_id,
-        });
-        // Their data is untouched: blocking the bot is not a deletion request.
-        continue;
-      }
-
-      // Everything else stays enabled and is simply logged, loudly enough to
-      // be findable by user id. One person's failure never ends the loop.
-      logger.error('Scheduled digest failed', {
-        chatId: entry.chat_id,
-        userId: entry.user_id,
-        error: error.message,
-      });
+      logger.error('Scheduled digests failed for a user', { userId, error: error.message });
     }
   }
 }
