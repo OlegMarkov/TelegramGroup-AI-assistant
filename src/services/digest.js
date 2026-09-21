@@ -12,7 +12,7 @@ const { buildFilterMatcher } = require('./filterMatcher');
 const { allowedKeywords } = require('../models/filter');
 const { getLimits } = require('../models/subscription');
 const { fetchChannelPosts } = require('./channelSource');
-const { truncate, escapeMarkdown, normalizeModelMarkdown } = require('../utils/formatters');
+const { truncate, escapeMarkdown, normalizeModelMarkdown, messageLink } = require('../utils/formatters');
 const { t, DEFAULT_LANGUAGE } = require('../utils/i18n');
 const logger = require('../utils/logger');
 
@@ -40,7 +40,8 @@ async function loadWindow(chat, hours) {
     const { posts } = await fetchChannelPosts(chat.username, { hours });
     return {
       isChannel: true,
-      items: posts.map((p) => ({ id: p.id, author: null, text: p.text })),
+      // A post's id is its real post number, so it doubles as the link target.
+      items: posts.map((p) => ({ id: p.id, messageId: p.id, author: null, text: p.text })),
       // Channel posts are fetched live and not capped, so nothing is hidden.
       totalAvailable: posts.length,
     };
@@ -52,6 +53,7 @@ async function loadWindow(chat, hours) {
     isChannel: false,
     items: items.map((m) => ({
       id: m.id,
+      messageId: m.message_id,
       author: m.username || null,
       text: m.text,
       isCaption: Boolean(m.is_caption),
@@ -134,7 +136,9 @@ async function generateDigest(chatId, userId, hours, lang = DEFAULT_LANGUAGE) {
       // as a link the user has every reason to read as coming from this bot.
       const lines = matches.slice(0, MAX_HIGHLIGHTS).map((item) => {
         const body = escapeMarkdown(truncate(item.text, HIGHLIGHT_CHARS));
-        return item.author ? `• *${escapeMarkdown(item.author)}*: ${body}` : `• ${body}`;
+        const link = messageLink(chat, item.messageId);
+        const open = link ? ` [${t(lang, 'common.openLink')}](${link})` : '';
+        return item.author ? `• *${escapeMarkdown(item.author)}*: ${body}${open}` : `• ${body}${open}`;
       });
       highlightBlock = `\n\n${t(lang, 'summary.highlightsHeader')}\n${lines.join('\n')}`;
     }

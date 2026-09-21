@@ -12,7 +12,7 @@ const {
 const { buildFilterMatcher } = require('./filterMatcher');
 const { allowedKeywords } = require('../models/filter');
 const { getLimits } = require('../models/subscription');
-const { escapeMarkdown, truncate } = require('../utils/formatters');
+const { escapeMarkdown, truncate, messageLink } = require('../utils/formatters');
 const { t, normalizeLanguage } = require('../utils/i18n');
 const { createSender, isBlockedError, isBadRequestError } = require('../utils/telegramSend');
 const { track, EVENTS } = require('./analytics');
@@ -82,20 +82,6 @@ function setAlertSender(fn) {
   sendMessage = fn;
 }
 
-/**
- * A link back to the message that matched.
- *
- * A public group has a username and a public permalink. A private supergroup
- * has neither, but t.me/c/<id>/<message> works for anyone already in the chat —
- * which the recipient is, since we only alert members. Anything else (a legacy
- * group, an id that is not a supergroup) gets no link rather than a broken one.
- */
-function messageLink(chat, messageId) {
-  if (!chat || !messageId) return null;
-  if (chat.username) return `https://t.me/${chat.username}/${messageId}`;
-  const id = String(chat.id);
-  return id.startsWith('-100') ? `https://t.me/c/${id.slice(4)}/${messageId}` : null;
-}
 
 /**
  * The keywords that actually match for this person right now.

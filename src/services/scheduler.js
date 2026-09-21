@@ -16,7 +16,7 @@ const {
   getAppState,
   setAppState,
 } = require('./database');
-const { splitForTelegram } = require('../utils/formatters');
+const { splitForTelegram, NO_PREVIEW } = require('../utils/formatters');
 const { createSender, isBlockedError, isBadRequestError } = require('../utils/telegramSend');
 const { SpendCapReachedError } = require('./aiBudget');
 const { feedbackKeyboard } = require('../commands/feedback');
@@ -110,7 +110,10 @@ async function runDueDigests({ sleep } = {}) {
 
       for (const [index, part] of parts.entries()) {
         // Last part only, same as the on-demand path.
-        const extra = index === parts.length - 1 ? feedbackKeyboard(lang, { chatId: entry.chat_id, hours }) : {};
+        const extra = {
+          ...NO_PREVIEW,
+          ...(index === parts.length - 1 ? feedbackKeyboard(lang, { chatId: entry.chat_id, hours }) : {}),
+        };
 
         await sender.send(async () => {
           // Same two hazards as the on-demand path: a digest can exceed

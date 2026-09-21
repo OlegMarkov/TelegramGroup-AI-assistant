@@ -18,7 +18,7 @@ const { ChannelUnavailableError } = require('../services/channelSource');
 const { SpendCapReachedError } = require('../services/aiBudget');
 const { feedbackKeyboard } = require('./feedback');
 const { getLimits, PREMIUM_LIMITS } = require('../models/subscription');
-const { isGroupChat, splitForTelegram } = require('../utils/formatters');
+const { isGroupChat, splitForTelegram, NO_PREVIEW } = require('../utils/formatters');
 const { startTyping } = require('../utils/typing');
 const { t, allTranslations } = require('../utils/i18n');
 const { track, EVENTS } = require('../services/analytics');
@@ -180,7 +180,7 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
     // Only the last part carries the buttons: a long summary arrives as
     // several messages, and a thumbs pair under each one asks the same
     // question four times.
-    const extra = index === parts.length - 1 ? feedbackKeyboard(lang, { chatId, hours }) : {};
+    const extra = { ...NO_PREVIEW, ...(index === parts.length - 1 ? feedbackKeyboard(lang, { chatId, hours }) : {}) };
 
     try {
       sent = await ctx.reply(part, { parse_mode: 'Markdown', ...extra });
