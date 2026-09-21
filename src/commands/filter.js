@@ -2,7 +2,7 @@ const crypto = require('node:crypto');
 const { getUserFilters, setUserFilters } = require('../services/database');
 const { filterSchema, allowedKeywords, MAX_KEYWORD_LENGTH } = require('../models/filter');
 const { getLimits, PREMIUM_LIMITS } = require('../models/subscription');
-const { normalize } = require('../services/filterMatcher');
+const { normalize, FILTER_CATEGORIES } = require('../services/filterMatcher');
 const { filterCategoriesMenu, filterKeywordsMenu } = require('../keyboards');
 const { t, allTranslations } = require('../utils/i18n');
 const { armPrompt, clearPrompt, captureReply, createSelectionStore } = require('../utils/uiState');
@@ -176,13 +176,18 @@ async function filterHandler(ctx) {
 
 async function toggleCategory(ctx) {
   const category = ctx.match[1];
+  // callback_data is client-supplied. The schema only bounds a category's
+  // length, so an unknown one would be stored and counted as a real toggle.
+  if (!FILTER_CATEGORIES.includes(category)) return ctx.answerCbQuery();
+
   const filters = getUserFilters(ctx.from.id);
 
-  const categories = filters.categories.includes(category)
-    ? filters.categories.filter((c) => c !== category)
-    : [...filters.categories, category];
+  const enabled = !filters.categories.includes(category);
+  const categories = enabled ? [...filters.categories, category] : filters.categories.filter((c) => c !== category);
 
-  save(ctx, { ...filters, categories });
+  if (save(ctx, { ...filters, categories })) {
+    track(EVENTS.FILTER_CATEGORY_TOGGLED, { userId: ctx.from.id, metadata: { category, enabled } });
+  }
 
   await showView(ctx, categoriesView);
   return ctx.answerCbQuery();
