@@ -82,7 +82,6 @@ function setAlertSender(fn) {
   sendMessage = fn;
 }
 
-
 /**
  * The keywords that actually match for this person right now.
  *
