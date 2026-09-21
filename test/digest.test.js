@@ -18,6 +18,12 @@ deepseek.summarize = async () => {
   return `stub-summary-${deepseekCallCount}`;
 };
 
+// Patched before digest.js is loaded, same reason as the DeepSeek stub above:
+// digest.js destructures fetchChannelPosts at require time.
+const channelSource = require('../src/services/channelSource');
+let channelPosts = [];
+channelSource.fetchChannelPosts = async () => ({ title: 'Stub Channel', posts: channelPosts });
+
 const db = require('../src/services/database');
 const { generateDigest } = require('../src/services/digest');
 
@@ -164,4 +170,27 @@ test('the truncation note is per request, not baked into the cached summary', as
   const result = await generateDigest(-108, 108, 24);
   assert.doesNotMatch(result.summaryText, /of \d+ messages/, 'the note is never inside the cached text');
   assert.equal(typeof result.truncated, 'boolean', 'it is reported as data for the caller to render');
+});
+
+test('a highlighted group message links back to itself, by message_id', async () => {
+  // A -100... id is a real private-supergroup id, the shape messageLink()
+  // requires to build a t.me/c/ link.
+  const chatId = -1009991001;
+  db.getOrCreateUser({ id: 109, username: 'linker', firstName: 'L' });
+  db.getOrCreateChat({ id: chatId, title: 'Linked', type: 'supergroup' });
+  db.saveMessage({ chatId, messageId: 55, userId: 109, username: 'linker', text: 'the zebra escaped again' });
+  db.setUserFilters(109, { keywords: ['zebra'], categories: [] });
+
+  const result = await generateDigest(chatId, 109, 24);
+  assert.match(result.highlightBlock, /https:\/\/t\.me\/c\/9991001\/55/);
+});
+
+test('a highlighted channel post links back to itself, by post id and the channel username', async () => {
+  const channel = db.getOrCreateChannel({ username: 'newsy', title: 'Newsy' });
+  db.getOrCreateUser({ id: 110, username: 'follower', firstName: 'F' });
+  channelPosts = [{ id: 77, text: 'a walrus appeared today', createdAt: new Date().toISOString() }];
+  db.setUserFilters(110, { keywords: ['walrus'], categories: [] });
+
+  const result = await generateDigest(channel.id, 110, 24);
+  assert.match(result.highlightBlock, /https:\/\/t\.me\/newsy\/77/);
 });
