@@ -29,6 +29,10 @@ const CHANNEL_PROMPT = 'onboarding:channel';
 // again; one welcome a day per group is plenty.
 const ADDER_WELCOME_THROTTLE_HOURS = 24;
 
+// The start payload the "add to group" link carries. Telegram posts it into the
+// group as "/start <payload>" once the bot is added; start.js stays quiet for it.
+const ADD_TO_GROUP_PAYLOAD = 'onboarding';
+
 /**
  * Nothing to summarize yet — no group, no channel. Who gets the question.
  *
@@ -46,7 +50,7 @@ function needsOnboarding(userId) {
  */
 function addToGroupUrl(ctx) {
   const username = ctx.botInfo && ctx.botInfo.username;
-  return username ? `https://t.me/${username}?startgroup=onboarding` : null;
+  return username ? `https://t.me/${username}?startgroup=${ADD_TO_GROUP_PAYLOAD}` : null;
 }
 
 // Spelled out rather than built from the path names: test/wiring.test.js reads
@@ -229,3 +233,4 @@ module.exports.askWhatToCatchUpOn = askWhatToCatchUpOn;
 module.exports.offerReferringGroup = offerReferringGroup;
 module.exports.welcomeAdder = welcomeAdder;
 module.exports.ADDER_WELCOME_THROTTLE_HOURS = ADDER_WELCOME_THROTTLE_HOURS;
+module.exports.ADD_TO_GROUP_PAYLOAD = ADD_TO_GROUP_PAYLOAD;
