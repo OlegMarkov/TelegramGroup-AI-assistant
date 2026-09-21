@@ -166,4 +166,4 @@ async function generateDigest(chatId, userId, hours, lang = DEFAULT_LANGUAGE) {
 // GROUP_MESSAGE_CHARS is exported because /privacy tells users exactly how much
 // of each message reaches DeepSeek. Stating that as a number typed into the
 // copy would let the policy drift away from the code the first time it changes.
-module.exports = { generateDigest, GROUP_MESSAGE_CHARS };
+module.exports = { generateDigest, loadWindow, buildTranscript, GROUP_MESSAGE_CHARS };

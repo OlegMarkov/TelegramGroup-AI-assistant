@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 2026-09-05_
+_Last updated: 2026-09-22_
 
 This policy describes what the Telegram Assistant Bot ("the bot") collects, why, and how to remove it. It describes the behaviour actually implemented in this codebase — the retention periods below are enforced automatically by a scheduled job, not just stated here.
 
@@ -36,7 +36,7 @@ For users who interact with the bot directly:
 
 ## Why
 
-Message text is stored solely to produce the product's core features: AI-generated summaries of recent group activity, and keyword search over past messages.
+Message text is stored solely to produce the product's core features: AI-generated summaries of recent group activity, AI-generated answers to questions about that same recent activity (`/ask`, premium), and keyword search over past messages.
 
 ## Third parties
 
@@ -44,7 +44,7 @@ Message text is stored solely to produce the product's core features: AI-generat
 
 Message text is transmitted to the **DeepSeek API** to generate summaries. DeepSeek is operated by Hangzhou DeepSeek Artificial Intelligence Co., Ltd., **a company based in Hangzhou, China**, and the summarization is performed on DeepSeek's own infrastructure — that is, **outside the European Economic Area and the United Kingdom**. If you are in the EEA or the UK, this is a transfer of your data to a country that has not received an EU adequacy decision.
 
-DeepSeek is the **only** third party that receives message content, and it receives it only at the moment a summary is generated. See DeepSeek's own terms and privacy policy for how they handle API data.
+DeepSeek is the **only** third party that receives message content, and it receives it only at the moment a summary or an answer is generated. See DeepSeek's own terms and privacy policy for how they handle API data.
 
 ### What is sent
 
@@ -57,11 +57,13 @@ When a summary is generated, the bot sends DeepSeek a single request containing:
 
 At most 200 messages are included in one request; longer windows are cut to the most recent 200.
 
+When a premium user asks a question with **`/ask`**, the request is the same: a transcript of **one chat's lookback window** (the longest window that user's plan allows a summary to cover, 72 hours for premium), in exactly the form above, plus **the question the user typed**. It never reaches further back than a summary could. Answers are not cached, because each depends on its question, and they are not stored.
+
 ### What is NOT sent
 
 - **No identifiers.** The request carries no Telegram user ID, no chat ID, no username of the person who asked, and no account of ours that could be linked back to you. DeepSeek receives a block of text and a target language.
 - **Nothing from `/find`.** Search runs entirely against the local database and never leaves the server.
-- **No message beyond the requested window,** and nothing from a chat other than the one being summarized.
+- **No message beyond the requested window,** and nothing from a chat other than the one being summarized or asked about.
 - **No message text at all when a cached summary is reused** — see below.
 
 Requests to fetch public channel posts go to Telegram's own public web preview (`t.me`) and carry no information about which user asked.

@@ -22,6 +22,7 @@ module.exports = {
     help: 'How I work — the full guide',
     summary: 'Summarize what you missed',
     find: 'Search the history of your groups',
+    ask: 'Ask a question about a chat (premium)',
     filter: 'Topics and keywords to highlight',
     channels: 'Public channels you follow',
     digest: 'Daily digest by DM (premium)',
@@ -43,7 +44,21 @@ module.exports = {
     tooManyRequests: '⏳ Too many requests. Please try again in {seconds}s.',
     unclaimedMessage:
       "🤔 I'm not sure what that refers to. Here's the menu — or /help for the full guide.\n\n" +
-      'If you were answering a question I asked, try tapping the button again.',
+      'If you were answering a question I asked, try tapping the button again. ' +
+      'To ask me something about your chats, start with /ask.',
+  },
+
+  ask: {
+    usage: 'Usage: /ask <question>\nExample: /ask what did we decide about the venue?',
+    tooLong: 'That question is too long — keep it under {max} characters.',
+    premiumOnly:
+      '💬 Asking questions about your chats is a premium feature. /subscribe to unlock it, or use /summary and /find.',
+    dailyLimit: "You've asked {limit} questions today, which is the daily limit. It resets at 00:00 UTC.",
+    pickChat: 'Which chat should I look in for: "{question}"?',
+    expired: 'That question has expired. Send /ask again.',
+    noActivity: 'There are no messages from the last {hours}h to answer from.',
+    header: '💬 *Answer — from the last {hours}h*',
+    failed: 'Sorry, I could not answer that right now. Please try again shortly.',
   },
 
   start: {
@@ -86,6 +101,8 @@ module.exports = {
       '🔎 /find <words> — search everything I have stored for your groups, e.g. `/find deploy schedule`. ' +
       'Captions on photos and files count too. ' +
       'Channel posts are read live and never stored, so they are not searchable.\n' +
+      '💬 /ask <question> — premium: I answer from the same recent window a summary covers, ' +
+      'e.g. `/ask what did we decide about the venue?`\n' +
       '🎯 /filter — pick topics, and add keywords of your own: a project, a product, your name. ' +
       'Anything matching gets its own block at the end of every summary. ' +
       'Endings count too — "release" also finds "releases".\n' +
@@ -490,7 +507,8 @@ module.exports = {
       '*Where summaries are made*\n' +
       'To write a summary I send the messages from that time window to *DeepSeek*, an AI provider ' +
       'based in China — so that text is processed outside the EU and the UK. Each message goes as ' +
-      'the sender name plus the first {groupChars} characters. Nothing else leaves the server: ' +
+      'the sender name plus the first {groupChars} characters. /ask sends the same window, plus the ' +
+      'question you typed. Nothing else leaves the server: ' +
       '/find searches only my own database, and no ID of yours is attached to the request.\n\n' +
       '*Who sees it*\n' +
       'Summaries are visible to members of that group who ask for them. A summary is cached and ' +

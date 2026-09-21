@@ -63,6 +63,7 @@ const FREE_LIMITS = {
   maxChannels: 1,
   maxKeywords: 1,
   weeklySummary: false,
+  maxQuestionsPerDay: 0,
 };
 
 const PREMIUM_LIMITS = {
@@ -76,6 +77,10 @@ const PREMIUM_LIMITS = {
   // option rather than a higher maxLookbackHours, which would widen what every
   // typed number can pull — that cap is the spend and abuse control.
   weeklySummary: true,
+  // /ask. Unlike summaries, every answer is a fresh AI call — the question is
+  // what makes it relevant, so nothing can be cached or shared. Thirty is far
+  // above what a person asks in a day and still bounds what one account costs.
+  maxQuestionsPerDay: 30,
 };
 
 /**
