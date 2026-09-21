@@ -111,6 +111,13 @@ async function handleMyChatMemberUpdate(ctx) {
     getOrCreateChat({ id: chat.id, title: chat.title, type: chat.type, addedBy: update.from.id });
     linkUserToChat(chat.id, update.from.id);
 
+    // Telegram sends this update for a promotion or a permission change too,
+    // where the bot was already in the group all along. Only an arrival gets
+    // the notice and the DM; the rest would re-announce it to everyone, and
+    // DM whoever happened to change a setting.
+    const wasPresent = ['member', 'administrator'].includes(update.old_chat_member && update.old_chat_member.status);
+    if (wasPresent) return;
+
     // A group has members of mixed languages; best effort is the language of
     // whoever added the bot.
     const lang = (ctx.state && ctx.state.lang) || DEFAULT_LANGUAGE;

@@ -7,7 +7,7 @@ const {
   isUserLinkedToChat,
 } = require('../services/database');
 const { escapeMarkdown, formatDate } = require('../utils/formatters');
-const { needsOnboarding, askWhatToCatchUpOn, offerReferringGroup } = require('./onboarding');
+const { needsOnboarding, askWhatToCatchUpOn, offerReferringGroup, ADD_TO_GROUP_PAYLOAD } = require('./onboarding');
 const logger = require('../utils/logger');
 
 const { t } = require('../utils/i18n');
@@ -69,10 +69,6 @@ function startPayload(ctx) {
   return text.split(/\s+/)[1] || '';
 }
 
-function hasPayload(ctx) {
-  return startPayload(ctx) !== '';
-}
-
 function referringChatId(ctx) {
   const match = startPayload(ctx).match(REFERRAL_PAYLOAD);
   if (!match) return null;
@@ -94,11 +90,11 @@ module.exports = (bot) => {
       track(EVENTS.REFERRAL_STARTED, { userId: ctx.from.id, chatId: fromChat, metadata: { firstStart: trialGranted } });
     }
 
-    // In a group this is either the "add to group" link arriving (a payload,
+    // In a group this is either the "add to group" link arriving (its payload,
     // and the bot's own join notice is already there) or somebody typing it.
     // Neither is the place for a DM welcome and a reply keyboard.
     if (ctx.chat && ctx.chat.type !== 'private') {
-      if (hasPayload(ctx)) return undefined;
+      if (startPayload(ctx) === ADD_TO_GROUP_PAYLOAD) return undefined;
       return ctx.reply(t(lang, 'start.inGroup'));
     }
 
