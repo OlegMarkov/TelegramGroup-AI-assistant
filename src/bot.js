@@ -15,6 +15,7 @@ const { setAdminNotifier } = require('./services/aiBudget');
 const { setAlertSender } = require('./services/keywordAlerts');
 const { getOrCreateChat, linkUserToChat, deactivateChat, claimJoinNotice } = require('./services/database');
 const { isGroupChat } = require('./utils/formatters');
+const { welcomeAdder } = require('./commands/onboarding');
 const { t, DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, PUBLIC_COMMANDS } = require('./utils/i18n');
 const { startHeartbeat } = require('./utils/heartbeat');
 
@@ -41,7 +42,7 @@ bot.catch((err, ctx) => {
 });
 
 function registerCommands(instance) {
-  ['start', 'help', 'summary', 'find', 'ask', 'filter', 'channel', 'subscribe', 'status', 'feedback', 'digest', 'stats', 'admin', 'broadcast', 'moderation', 'privacy', 'language'].forEach((name) => {
+  ['start', 'onboarding', 'help', 'summary', 'find', 'ask', 'filter', 'channel', 'subscribe', 'status', 'feedback', 'digest', 'stats', 'admin', 'broadcast', 'moderation', 'privacy', 'language'].forEach((name) => {
     require(`./commands/${name}`)(instance);
   });
 
@@ -114,11 +115,19 @@ async function handleMyChatMemberUpdate(ctx) {
     // whoever added the bot.
     const lang = (ctx.state && ctx.state.lang) || DEFAULT_LANGUAGE;
 
-    await ctx.telegram.sendMessage(
-      chat.id,
-      t(lang, 'onboarding.joined', { retentionDays: config.privacy.messageRetentionDays }),
-      { parse_mode: 'Markdown' }
-    );
+    try {
+      await ctx.telegram.sendMessage(
+        chat.id,
+        t(lang, 'onboarding.joined', { retentionDays: config.privacy.messageRetentionDays }),
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      // A group where the bot may not post still deserves the DM below, which
+      // is the one place its adder hears that it arrived.
+      logger.warn('Could not post the arrival notice', { chatId: chat.id, error: error.message });
+    }
+
+    await welcomeAdder(ctx, chat, update.from, { isAdmin: newStatus === 'administrator' });
   } else if (newStatus === 'left' || newStatus === 'kicked') {
     deactivateChat(chat.id);
   }

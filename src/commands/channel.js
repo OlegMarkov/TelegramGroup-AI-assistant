@@ -113,10 +113,13 @@ async function listHandler(ctx) {
  * Adds one channel from whatever the user gave us — a bare name, an @handle or
  * a full t.me link, all of which normalizeHandle accepts.
  *
- * Returns true when a channel was actually added, so the button flow knows
- * whether to redraw the list and the text flow knows whether to keep waiting.
+ * Returns the added channel's chat row (false otherwise), so the button flow
+ * knows whether to redraw the list, the text flow knows whether to keep
+ * waiting, and onboarding knows what to summarize next. `addedKey` is the confirmation copy:
+ * onboarding summarizes straight away, so "run /summary" would be the wrong
+ * thing to tell someone about to receive one.
  */
-async function addChannelFromInput(ctx, input) {
+async function addChannelFromInput(ctx, input, { addedKey = 'channel.added' } = {}) {
   const lang = ctx.state.lang;
   const limits = getLimits(ctx.state.subscription);
 
@@ -172,10 +175,10 @@ async function addChannelFromInput(ctx, input) {
   });
 
   await ctx.reply(
-    t(lang, 'channel.added', { title: escapeMarkdown(resolved.title), handle: resolved.handle }),
+    t(lang, addedKey, { title: escapeMarkdown(resolved.title), handle: resolved.handle }),
     { parse_mode: 'Markdown' }
   );
-  return true;
+  return chat;
 }
 
 function promptForHandle(ctx) {
@@ -329,3 +332,5 @@ module.exports = (bot) => {
   bot.action('channel:addcancel', addCancelCallback);
   bot.on('text', captureReply(ADD_PROMPT, handleAddAnswer));
 };
+
+module.exports.addChannelFromInput = addChannelFromInput;

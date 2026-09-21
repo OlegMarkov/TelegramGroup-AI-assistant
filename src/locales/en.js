@@ -68,22 +68,16 @@ module.exports = {
       '🎁 *Your {days}-day free trial has started.* Unlimited summaries, longer lookback, ' +
       'more channels and keywords, and daily digests — all switched on right now. ' +
       'Nothing to pay and nothing to cancel: when it ends you simply drop back to the free plan.',
-    greeting:
-      "👋 Hi {name}! I'm your AI assistant for busy chats — I read them so you don't have to.\n\n" +
-      '*Two ways to start*\n' +
-      '💬 Add me to a group, then run /summary there to see what you missed.\n' +
-      '📢 Or follow a public channel with /channels — no group needed.\n\n' +
-      '*Then, from right here in DM*\n' +
-      '📝 /summary — the last few hours in a few lines ' +
-      '(free: {freeSummaries} a day, up to {freeHours}h back)\n' +
-      '🔎 /find <words> — search what was said in your groups\n' +
-      '🎯 /filter — topics and keywords of your own ' +
-      '({freeKeywords} free, {premiumKeywords} with premium), pulled out of every summary\n' +
-      '📢 /channels — public channels ({freeChannels} free, {premiumChannels} with premium)\n' +
-      '📅 /digest — premium: a summary by DM every day, at an hour you pick\n' +
-      '⭐ /subscribe — unlimited summaries, longer lookback, daily digests\n\n' +
-      'ℹ️ /help for the full guide, 🔒 /privacy for what I store.\n' +
-      'Or just tap the buttons below.{trialNote}',
+    // Short on purpose: the first-run question follows it (onboarding.question),
+    // and the full list of what the bot does lives in /help.
+    welcome:
+      "👋 Hi {name}! I read busy chats and tell you what you missed — " +
+      'a few lines instead of a few hundred messages.{trialNote}',
+    welcomeBack:
+      '👋 Welcome back, {name}! Use the buttons below to catch up, or /help for everything I can do.{trialNote}',
+    inGroup:
+      "👋 I'm here. Run /summary to see what this chat has been talking about — " +
+      'everything else works in a private chat with me.',
   },
 
   help: {
@@ -153,6 +147,53 @@ module.exports = {
       'to write those summaries. They are deleted automatically after {retentionDays} days.\n\n' +
       '🔒 /privacy — the full details, and a button to stop me storing YOUR messages anywhere.\n' +
       '🗑 /forgetme — delete what I already have for you.',
+
+    // --- First run, in DM: one question, then a short walk to a first result.
+    question:
+      '*What do you want to catch up on?*\n\n' +
+      'Not sure yet? The example shows what you would get. /help lists everything I can do.',
+    groupButton: "💬 A group I'm in",
+    channelButton: '📢 A public channel',
+    exampleButton: '👀 Show me an example',
+    backButton: '↩️ Back',
+    addToGroupButton: '➕ Add me to a group',
+    groupHowTo:
+      '💬 *Add me to your group*\n\n' +
+      "Tap the button, pick the group and confirm. I'll message you here once I'm in.\n\n" +
+      'I can only see messages sent *after* I join, so your first summary is ready once people ' +
+      'have talked for a while.',
+    channelPrompt:
+      '📢 Send me a public channel — its @name or its link.\n\n' +
+      "For example `@durov` or `https://t.me/durov`. I'll follow it and summarize its latest posts right away.",
+    channelAdded: '✅ Following *{title}* (@{handle}).',
+    channelNext:
+      '👉 /summary whenever you want the latest, /channels to follow more, /help for everything else. ' +
+      'Busy group chat? I can summarize that too:',
+    tryAnother: 'Want to try something else?',
+    // Labelled as made up in its first line: a realistic summary arriving
+    // unasked must not look like the bot has read something of yours.
+    example:
+      '👀 *Example — a made-up chat, not your data*\n\n' +
+      '📝 *Summary — last 24h*\n\n' +
+      '*Launch planning*\n' +
+      '• Release moved to Thursday; Anna is updating the changelog.\n' +
+      '• QA found two blockers in checkout — Mark is on both.\n\n' +
+      '*Office*\n' +
+      "• Friday's team lunch is at 13:00, same place as last time.\n\n" +
+      '🔔 *Matches your filters*\n' +
+      '• _deadline_ — Anna: "hard deadline for the copy is Wednesday noon"\n\n' +
+      "That's what I send instead of 300 messages. Try it on something real:",
+    referralOffer: "📝 You came from *{title}*. Want to see what it's been talking about?",
+    referralButton: '📝 Summarize {title}',
+    // DM to whoever added the bot to a group.
+    adderWelcome:
+      "✅ I'm in *{title}* now.\n\n" +
+      'I can only see messages sent from now on, so give it a little while — then run /summary ' +
+      'here and pick the group, or run it in the group itself.{privacyNote}\n\n' +
+      '🔒 I told the group what I store; /privacy has the details.',
+    adderPrivacyMode:
+      '⚠️ Right now Telegram only shows me messages that mention me or reply to me. ' +
+      'Make me an admin in *{title}* so I can follow the whole conversation.',
   },
 
   summary: {

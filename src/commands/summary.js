@@ -309,3 +309,5 @@ module.exports = (bot) => {
 };
 
 module.exports.parseHours = parseHours;
+// Onboarding summarizes a just-added channel through exactly the same gates.
+module.exports.buildAndSendSummary = buildAndSendSummary;

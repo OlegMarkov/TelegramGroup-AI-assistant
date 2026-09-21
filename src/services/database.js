@@ -229,6 +229,11 @@ addColumnIfMissing('scheduled_digests', 'disabled_reason', 'TEXT');
 // joins produces one notice rather than one per person. NULL means never.
 addColumnIfMissing('chats', 'notice_posted_at', 'TEXT');
 
+// When whoever added the bot to a group was last DMed about it, so removing and
+// re-adding the bot does not become a way to make it message someone again and
+// again. NULL means never.
+addColumnIfMissing('chats', 'adder_welcomed_at', 'TEXT');
+
 // When a group admin paused ingestion. NULL means the bot is collecting.
 // Existing messages are untouched: pausing stops collection, it is not a
 // deletion request.
@@ -655,6 +660,18 @@ function claimJoinNotice(chatId, throttleHours) {
       `UPDATE chats SET notice_posted_at = datetime('now')
        WHERE id = ?
          AND (notice_posted_at IS NULL OR notice_posted_at < datetime('now', ?))`
+    )
+    .run(chatId, `-${throttleHours} hours`);
+  return Number(result.changes) > 0;
+}
+
+/** claimJoinNotice's twin for the DM to whoever added the bot, same reasoning. */
+function claimAdderWelcome(chatId, throttleHours) {
+  const result = db
+    .prepare(
+      `UPDATE chats SET adder_welcomed_at = datetime('now')
+       WHERE id = ?
+         AND (adder_welcomed_at IS NULL OR adder_welcomed_at < datetime('now', ?))`
     )
     .run(chatId, `-${throttleHours} hours`);
   return Number(result.changes) > 0;
@@ -1335,6 +1352,55 @@ function getDistinctEventUsers(eventTypes, sinceDays) {
 }
 
 /**
+ * Activation: of the people who first started the bot in the window, how many
+ * had a summary in hand within a day of it.
+ *
+ * Keyed on each user's first user_started event rather than users.created_at,
+ * because auth creates a users row for every group member who ever speaks —
+ * people who never opened the bot and cannot be counted as failing to activate.
+ * Anyone who started less than a day ago is left out of both sides, for the
+ * same reason the retention curve leaves out users too new to have returned.
+ */
+function getActivation(sinceDays) {
+  const row = db
+    .prepare(
+      `WITH starts AS (
+         SELECT user_id, MIN(created_at) AS started_at
+         FROM events
+         WHERE event_type = 'user_started' AND user_id IS NOT NULL
+         GROUP BY user_id
+       )
+       SELECT
+         COUNT(*) AS eligible,
+         COALESCE(SUM(CASE WHEN EXISTS (
+           SELECT 1 FROM events e
+           WHERE e.user_id = s.user_id
+             AND e.event_type = 'summary_completed'
+             AND e.created_at >= s.started_at
+             AND e.created_at <= datetime(s.started_at, '+1 day')
+         ) THEN 1 ELSE 0 END), 0) AS activated
+       FROM starts s
+       WHERE s.started_at >= datetime('now', ?)
+         AND s.started_at <= datetime('now', '-1 day')`
+    )
+    .get(`-${sinceDays} days`);
+  return { eligible: row ? row.eligible : 0, activated: row ? row.activated : 0 };
+}
+
+/** Which first-run path people picked, in distinct users per path. */
+function getOnboardingPaths(sinceDays) {
+  return db
+    .prepare(
+      `SELECT json_extract(metadata, '$.path') AS path, COUNT(DISTINCT user_id) AS users
+       FROM events
+       WHERE event_type = 'onboarding_path_chosen' AND created_at >= datetime('now', ?)
+       GROUP BY path
+       ORDER BY users DESC`
+    )
+    .all(`-${sinceDays} days`);
+}
+
+/**
  * Rolling retention: of users who joined at least N days ago, how many did
  * anything at all on or after (join date + N days).
  *
@@ -1674,6 +1740,7 @@ module.exports = {
   disableScheduledDigest,
   getDueScheduledDigests,
   claimJoinNotice,
+  claimAdderWelcome,
   setChatPaused,
   getPausedChatIds,
   getOptedOutUserIds,
@@ -1700,6 +1767,8 @@ module.exports = {
   logEvent,
   getEventCounts,
   getDistinctEventUsers,
+  getActivation,
+  getOnboardingPaths,
   getRetentionCurve,
   getWeeklyCohorts,
   getDailyActiveUsers,

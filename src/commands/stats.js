@@ -1,5 +1,5 @@
 const config = require('../config');
-const { getFunnelReport, getRetentionReport } = require('../services/analytics');
+const { getFunnelReport, getRetentionReport, getActivationReport } = require('../services/analytics');
 const { getAppState, getSummaryFeedbackCounts, getDigestSpread } = require('../services/database');
 const { describeBudget } = require('../services/aiBudget');
 
@@ -104,6 +104,18 @@ async function statsHandler(ctx) {
   const referralPct =
     funnel.referredUsers > 0 ? ((funnel.convertedFromReferral / funnel.referredUsers) * 100).toFixed(1) : '0.0';
   sections.push(`🔗 *Referral → paid*: ${funnel.convertedFromReferral}/${funnel.referredUsers} (${referralPct}%)`);
+
+  // Whether the first-run flow gets people to a first result: a summary
+  // within a day of their first /start. Paths are distinct users per choice.
+  const activation = getActivationReport(days);
+  const activationPct =
+    activation.eligible > 0 ? ((activation.activated / activation.eligible) * 100).toFixed(1) : '0.0';
+  const paths = activation.paths.map((p) => `${p.path} ${p.users}`).join(', ') || 'none chosen';
+  sections.push(
+    `🚀 *Activation* (summary within 24h of first start): ` +
+      `${activation.activated}/${activation.eligible} (${activationPct}%)\n` +
+      `First-run paths: ${paths}`
+  );
 
   // Whether the summaries are any good, which nothing measured before. Split
   // by language because the prompt is language-specific: an average across both

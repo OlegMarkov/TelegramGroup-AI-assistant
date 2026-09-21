@@ -90,7 +90,7 @@ if (sourceArg) {
 
 const config = require('../src/config');
 const { db, getSummaryFeedbackCounts, getDigestSpread } = require('../src/services/database');
-const { getFunnelReport, getRetentionReport } = require('../src/services/analytics');
+const { getFunnelReport, getRetentionReport, getActivationReport } = require('../src/services/analytics');
 
 if (!sourceLabel) sourceLabel = path.resolve(config.database.path);
 
@@ -133,6 +133,7 @@ const totalEvents = db.prepare('SELECT COUNT(*) AS n FROM events').get().n;
 
 const funnel = getFunnelReport(days);
 const { curve, cohorts, dailyActive } = getRetentionReport();
+const activation = getActivationReport(days);
 const feedback = getSummaryFeedbackCounts(days);
 
 const thin = totalEvents < THIN_DATA_EVENTS;
@@ -181,6 +182,21 @@ ${table(
 )}
 
 Total purchasers in the window: ${funnel.totalPurchasers}.`);
+
+sections.push(`## Activation (last ${days} days)
+
+People whose first /start was in the window and at least a day ago, and how
+many of them completed a summary within 24h of it. Paths are the first-run
+choices on /start, in distinct users. At low volume these compare paths by a
+user or two: read them as shape, not as a verdict on any one path.
+
+${table(
+  ['measure', 'value'],
+  [
+    ['Activated within 24h', `${activation.activated}/${activation.eligible} (${pct(activation.activated, activation.eligible)})`],
+    ...activation.paths.map((p) => [`Path: ${p.path}`, p.users]),
+  ]
+)}`);
 
 sections.push(`## Retention
 
