@@ -23,6 +23,10 @@ const EVENTS = {
   CHANNEL_REMOVED: 'channel_removed',
   CHANNEL_BLOCKED_PREMIUM: 'channel_blocked_premium',
   CHANNEL_BLOCKED_LIMIT: 'channel_blocked_limit',
+  // Topic categories are free and cost nothing to match, so the only open
+  // question about them is whether anyone uses them at all: they overlap with
+  // the theme headings every summary already writes. Measured before changed.
+  FILTER_CATEGORY_TOGGLED: 'filter_category_toggled',
   FILTER_KEYWORDS_ADDED: 'filter_keywords_added',
   FILTER_KEYWORDS_REMOVED: 'filter_keywords_removed',
   FILTER_BLOCKED_PREMIUM: 'filter_blocked_premium',
