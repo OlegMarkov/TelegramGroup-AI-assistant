@@ -175,6 +175,7 @@ ${table(
   [
     ['Paywall → purchase', funnel.convertedFromPaywall, funnel.paywallHitUsers, pct(funnel.convertedFromPaywall, funnel.paywallHitUsers)],
     ['Trial → paid', funnel.convertedFromTrial, funnel.trialUsers, pct(funnel.convertedFromTrial, funnel.trialUsers)],
+    ['Referral → paid', funnel.convertedFromReferral, funnel.referredUsers, pct(funnel.convertedFromReferral, funnel.referredUsers)],
     ['Reminder → renewal', funnel.renewedAfterReminder, funnel.remindedUsers, pct(funnel.renewedAfterReminder, funnel.remindedUsers)],
   ]
 )}

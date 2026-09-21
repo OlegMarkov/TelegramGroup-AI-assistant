@@ -174,6 +174,8 @@ module.exports = {
     // Appended to every group summary, so the bot's presence is visible to
     // people reading it who never saw the notice when it joined.
     footer: "_Summarized by this bot, which stores this chat's messages. /privacy for what and how long._",
+    // Under group summaries only; {link} is a t.me start link naming this group.
+    referral: '[➕ Get summaries like this for your own groups]({link})',
     chatPaused:
       '⏸ Collection is paused in this chat, so there is nothing new to summarize.\n' +
       'A group admin can run /resume to start it again.',

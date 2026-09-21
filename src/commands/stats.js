@@ -95,6 +95,11 @@ async function statsHandler(ctx) {
     funnel.trialUsers > 0 ? ((funnel.convertedFromTrial / funnel.trialUsers) * 100).toFixed(1) : '0.0';
   sections.push(`🎁 *Trial → paid*: ${funnel.convertedFromTrial}/${funnel.trialUsers} (${trialPct}%)`);
 
+  // Whether the link under group summaries is an acquisition channel at all.
+  const referralPct =
+    funnel.referredUsers > 0 ? ((funnel.convertedFromReferral / funnel.referredUsers) * 100).toFixed(1) : '0.0';
+  sections.push(`🔗 *Referral → paid*: ${funnel.convertedFromReferral}/${funnel.referredUsers} (${referralPct}%)`);
+
   // Whether the summaries are any good, which nothing measured before. Split
   // by language because the prompt is language-specific: an average across both
   // hides the thing worth seeing when a prompt change is being judged.

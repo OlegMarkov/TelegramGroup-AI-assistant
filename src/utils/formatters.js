@@ -97,6 +97,16 @@ function messageLink(chat, messageId) {
   return id.startsWith('-100') ? `https://t.me/c/${id.slice(4)}/${messageId}` : null;
 }
 
+/**
+ * The link under a group summary, for members who want the bot for their own
+ * groups. Its start payload names the group, so /start can credit it; the
+ * payload is `g` plus the (negative) chat id, all within Telegram's allowed
+ * [A-Za-z0-9_-]. Null without a bot username, which only a test lacks.
+ */
+function referralLink(botUsername, chatId) {
+  return botUsername ? `https://t.me/${botUsername}?start=g${chatId}` : null;
+}
+
 // Send option for any message that may carry messageLink() links. Telegram
 // otherwise expands the first link into a preview card of some unrelated
 // message, pushing the summary or the results below the fold.
@@ -104,6 +114,7 @@ const NO_PREVIEW = { link_preview_options: { is_disabled: true } };
 
 module.exports = {
   messageLink,
+  referralLink,
   NO_PREVIEW,
   escapeMarkdownV2,
   escapeMarkdown,
