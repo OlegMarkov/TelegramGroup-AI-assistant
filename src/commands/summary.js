@@ -18,7 +18,7 @@ const { ChannelUnavailableError } = require('../services/channelSource');
 const { SpendCapReachedError } = require('../services/aiBudget');
 const { feedbackKeyboard } = require('./feedback');
 const { getLimits, PREMIUM_LIMITS } = require('../models/subscription');
-const { isGroupChat, splitForTelegram, NO_PREVIEW } = require('../utils/formatters');
+const { isGroupChat, splitForTelegram, NO_PREVIEW, referralLink } = require('../utils/formatters');
 const { startTyping } = require('../utils/typing');
 const { t, allTranslations } = require('../utils/i18n');
 const { track, EVENTS } = require('../services/analytics');
@@ -176,7 +176,15 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
   // Assembled per request and never cached, like the header: a footer inside
   // the cached text would be shared across every requester and every window.
   // Groups only — a channel summary has no members to tell.
-  const footer = result.isChannel ? '' : `\n\n${t(lang, 'summary.footer')}`;
+  let footer = '';
+  if (!result.isChannel) {
+    footer = `\n\n${t(lang, 'summary.footer')}`;
+    // Posted in the group, the summary is read by members who have never used
+    // the bot themselves — the one audience a link to it is worth showing to.
+    // Not in a DM, whose reader already has it.
+    const link = isGroupChat(ctx.chat) ? referralLink(ctx.botInfo && ctx.botInfo.username, chatId) : null;
+    if (link) footer += `\n${t(lang, 'summary.referral', { link })}`;
+  }
 
   // Assembled here rather than cached, exactly like the header and the footer:
   // whether the window was truncated depends on the window, and the cached

@@ -1,6 +1,6 @@
 const { mainMenu } = require('../keyboards');
 const { FREE_LIMITS, PREMIUM_LIMITS, TRIAL_PLAN, TRIAL_DAYS } = require('../models/subscription');
-const { createSubscription, hasEverHadSubscription } = require('../services/database');
+const { createSubscription, hasEverHadSubscription, getChatById } = require('../services/database');
 const { escapeMarkdown, formatDate } = require('../utils/formatters');
 const logger = require('../utils/logger');
 
@@ -48,11 +48,37 @@ function grantTrialIfDue(ctx) {
   return true;
 }
 
+/**
+ * The start payload carried by the link under a group summary, `g<chat id>`
+ * (see referralLink in utils/formatters).
+ *
+ * Read from the message text rather than a Telegraf convenience property, whose
+ * name has changed between versions. Only a group the bot actually knows is
+ * credited: the payload is whatever the link said, and anyone can edit a link.
+ */
+const REFERRAL_PAYLOAD = /^g(-\d{1,20})$/;
+
+function referringChatId(ctx) {
+  const text = (ctx.message && ctx.message.text) || '';
+  const match = (text.split(/\s+/)[1] || '').match(REFERRAL_PAYLOAD);
+  if (!match) return null;
+  const chat = getChatById(Number(match[1]));
+  return chat && chat.source !== 'channel' ? chat.id : null;
+}
+
 module.exports = (bot) => {
   bot.start(async (ctx) => {
     track(EVENTS.USER_STARTED, { userId: ctx.from.id });
     const lang = ctx.state.lang;
-    const trialNote = grantTrialIfDue(ctx) ? `\n\n${t(lang, 'start.trialGranted', { days: TRIAL_DAYS })}` : '';
+    const trialGranted = grantTrialIfDue(ctx);
+    const trialNote = trialGranted ? `\n\n${t(lang, 'start.trialGranted', { days: TRIAL_DAYS })}` : '';
+
+    const fromChat = referringChatId(ctx);
+    if (fromChat !== null) {
+      // firstStart separates people the link brought in from existing users
+      // who happened to tap it; a granted trial is the "never been here" test.
+      track(EVENTS.REFERRAL_STARTED, { userId: ctx.from.id, chatId: fromChat, metadata: { firstStart: trialGranted } });
+    }
     // The greeting is sent as Markdown, and a first name is free-form text: an
     // unbalanced * or _ in it would make Telegram reject the whole message, so
     // the very first thing a new user sees would be nothing at all.

@@ -47,6 +47,10 @@ const EVENTS = {
   REMINDER_SENT: 'reminder_sent',
   RENEWED_AFTER_REMINDER: 'renewed_after_reminder',
   TRIAL_STARTED: 'trial_started',
+  // Someone who arrived through the link under a group summary. chatId is the
+  // group it came from, so the channel is measurable per group. It grants
+  // nothing: a reward would only pay people to refer their own second account.
+  REFERRAL_STARTED: 'referral_started',
   SUBSCRIPTION_PURCHASED: 'subscription_purchased',
 };
 
@@ -90,6 +94,10 @@ function getFunnelReport(sinceDays) {
   const trialUsers = getDistinctEventUsers([EVENTS.TRIAL_STARTED], sinceDays);
   const convertedFromTrial = trialUsers.filter((id) => purchasedUsers.has(id)).length;
 
+  // Whether the summary footer brings in people who go on to pay.
+  const referredUsers = getDistinctEventUsers([EVENTS.REFERRAL_STARTED], sinceDays);
+  const convertedFromReferral = referredUsers.filter((id) => purchasedUsers.has(id)).length;
+
   return {
     counts,
     paywallHitUsers: paywallUsers.length,
@@ -99,6 +107,8 @@ function getFunnelReport(sinceDays) {
     renewedAfterReminder,
     trialUsers: trialUsers.length,
     convertedFromTrial,
+    referredUsers: referredUsers.length,
+    convertedFromReferral,
   };
 }
 

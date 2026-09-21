@@ -138,6 +138,8 @@ Every meaningful funnel moment — `/start`, a new group getting linked, a summa
 
 Run `/stats` (restricted to the Telegram user IDs in `ADMIN_USER_IDS`) to get a report in DM: event counts with unique-user counts, plus the number that matters most for pricing decisions — **of the users who ever hit a paywall (daily limit, group limit, or a premium-only command), how many went on to actually subscribe**. Non-admins get no reply at all rather than an "unauthorized" message, so the command's existence isn't discoverable.
 
+**Referral link.** A summary posted *in a group* ends with a link to the bot whose start payload names that group (`?start=g<chat id>`). `/start` records `referral_started` against the group, only for a group the bot actually knows, and `/stats` reports referral → paid. It grants nothing to anyone: a reward would pay people to refer their own second account. Summaries delivered by DM carry no link, since their reader already has the bot.
+
 ## How group tracking works
 
 1. Add the bot to a group. It registers the chat and posts a setup message.
