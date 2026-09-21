@@ -46,7 +46,11 @@ Expiry reminders cover trials — the last day is the best moment there will eve
 | Lookback window | up to 24h | up to 72h |
 | Groups you can run commands in | 1 | Unlimited |
 | Public channels you can summarize | 1 | 20 |
-| Scheduled daily digest (`/digest`) | ❌ | ✅ |
+| Filter keywords that match | 1 | 20 |
+| Keyword alerts by DM | ❌ | ✅ |
+| Scheduled daily/weekly digest (`/digest`) | ❌ | ✅ |
+
+A first `/start` gives **7 days of premium** (see [Free trial](#free-trial)). Topic categories in `/filter` are free on both plans.
 
 Limits are defined in [`src/models/subscription.js`](src/models/subscription.js) (`FREE_LIMITS` / `PREMIUM_LIMITS`) and enforced per-requester in [`src/commands/summary.js`](src/commands/summary.js), [`src/commands/find.js`](src/commands/find.js), and [`src/commands/digest.js`](src/commands/digest.js). Daily usage resets at 00:00 UTC. If a user's subscription lapses, their scheduled digest is silently skipped (not deleted) until they resubscribe.
 
@@ -289,22 +293,9 @@ or simply stop the bot briefly and copy `bot.db`, `bot.db-wal`, and `bot.db-shm`
 
 5. **Configure the bot in [@BotFather](https://t.me/BotFather)**:
    - `/setprivacy` → **Disable** (required — without it the bot can't see group messages)
-   - `/setcommands` — paste the list below so commands autocomplete for users
    - `/setdescription` and `/setabouttext` — mention that the bot reads group messages, and link your privacy policy
 
-   ```
-   start - Get started and see the main menu
-   summary - AI summary of recent group activity
-   find - Search past messages
-   filter - Choose keywords to highlight
-   digest - Set up a daily digest (premium)
-   subscribe - Unlock premium features
-   language - Change language / Сменить язык
-   privacy - What I store and how to delete it
-   forgetme - Delete my stored data
-   ```
-
-   BotFather also supports per-language command lists — you can repeat `/setcommands` with the Russian locale selected to give Russian-language clients localized command descriptions.
+   There is no need to run `/setcommands`. The bot publishes its own "/" menu at every startup (`publishCommandMenu()` in [`src/bot.js`](src/bot.js)), in each supported language, from `PUBLIC_COMMANDS` in [`src/utils/i18n.js`](src/utils/i18n.js). A list pasted into BotFather would be overwritten on the next restart, and would drift from the code in between.
 
 6. **Start it**:
 
@@ -349,7 +340,9 @@ healthcheck.js        Standalone script run by Docker's HEALTHCHECK (checks hear
 src/
 ├── bot.js            Bot initialization & launch
 ├── config.js         Environment variables
-├── commands/         Command handlers (start, summary, find, filter, subscribe, digest, stats, privacy, language)
+├── commands/         One module per feature, registered by name in bot.js (start, help, summary, find, filter,
+│                     channel, subscribe, status, feedback, digest, stats, admin, broadcast, moderation,
+│                     privacy incl. /forgetme, language) plus fallback, registered last
 ├── locales/           Translations (en, ru)
 ├── keyboards/         Inline/reply keyboards
 ├── middleware/        Auth, request logging, rate limiting, group message ingestion
