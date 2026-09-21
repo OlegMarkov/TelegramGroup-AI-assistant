@@ -350,7 +350,7 @@ healthcheck.js        Standalone script run by Docker's HEALTHCHECK (checks hear
 src/
 ├── bot.js            Bot initialization & launch
 ├── config.js         Environment variables
-├── commands/         One module per feature, registered by name in bot.js (start, help, summary, find, filter,
+├── commands/         One module per feature, registered by name in bot.js (start, help, summary, find, ask, filter,
 │                     channel, subscribe, status, feedback, digest, stats, admin, broadcast, moderation,
 │                     privacy incl. /forgetme, language) plus fallback, registered last
 ├── locales/           Translations (en, ru)

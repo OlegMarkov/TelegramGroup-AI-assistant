@@ -90,7 +90,13 @@ function renderSection(lang, { entry, result }) {
 function bundleFeedbackKeyboard(lang, sections) {
   const rows = sections.map(({ entry, hours }) => {
     const [up, down] = feedbackKeyboard(lang, { chatId: entry.chat_id, hours }).reply_markup.inline_keyboard[0];
-    return [{ ...up, text: `${up.text} ${truncate(entry.chat_title || '', VOTE_LABEL_CHARS)}`.trim() }, down];
+    // Both halves named: a row of identical "not useful" buttons leaves the
+    // chat a vote is about to the reader's sense of which row they are in.
+    const label = truncate(entry.chat_title || '', VOTE_LABEL_CHARS);
+    return [
+      { ...up, text: `${up.text} ${label}`.trim() },
+      { ...down, text: `${down.text} ${label}`.trim() },
+    ];
   });
   return { reply_markup: { inline_keyboard: rows } };
 }
