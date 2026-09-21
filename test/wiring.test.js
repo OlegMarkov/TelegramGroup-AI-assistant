@@ -253,6 +253,8 @@ const HOLE_VALUES = [
   'en',
   'ru',
   '0123456789',
+  // A uiState token store's key: /find's "more results" button.
+  '0123abcd',
 ];
 
 function expansions(template) {
