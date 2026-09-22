@@ -13,6 +13,7 @@ const { escapeMarkdown } = require('../utils/formatters');
 const { t, allTranslations } = require('../utils/i18n');
 const { armPrompt, clearPrompt, captureReply, createSelectionStore } = require('../utils/uiState');
 const { track, EVENTS } = require('../services/analytics');
+const { startTrialForRequest, trialStartedText } = require('../services/trial');
 const logger = require('../utils/logger');
 
 const ADD_PROMPT = 'channel:add';
@@ -178,6 +179,13 @@ async function addChannelFromInput(ctx, input, { addedKey = 'channel.added' } = 
     t(lang, addedKey, { title: escapeMarkdown(resolved.title), handle: resolved.handle }),
     { parse_mode: 'Markdown' }
   );
+
+  // A first channel is something to summarize, which is when the trial starts
+  // (services/trial). Refreshing ctx.state lets onboarding's summary that
+  // follows use it straight away.
+  if (startTrialForRequest(ctx)) {
+    await ctx.reply(trialStartedText(lang), { parse_mode: 'Markdown' });
+  }
   return chat;
 }
 

@@ -22,6 +22,8 @@ const { isGroupChat, splitForTelegram, NO_PREVIEW, referralLink } = require('../
 const { startTyping } = require('../utils/typing');
 const { t, allTranslations } = require('../utils/i18n');
 const { track, EVENTS } = require('../services/analytics');
+const { startTrialForRequest, trialStartedText } = require('../services/trial');
+const { maybeShowTip } = require('./tips');
 const logger = require('../utils/logger');
 
 const DEFAULT_HOURS = 24;
@@ -49,6 +51,14 @@ function parseHours(args) {
 async function buildAndSendSummary(ctx, chatId, requestedHours) {
   const requesterId = ctx.from.id;
   const lang = ctx.state.lang;
+
+  // Asking for a summary in DM is the one way to reach something to summarize
+  // without adding anything — being linked to a group by talking in it — so it
+  // is a trial trigger too (services/trial). DM only: announcing somebody's
+  // trial in their group would be odd, and granting it silently wastes it.
+  if (!isGroupChat(ctx.chat) && startTrialForRequest(ctx)) {
+    await ctx.reply(trialStartedText(lang), { parse_mode: 'Markdown' });
+  }
   const limits = getLimits(ctx.state.subscription);
   const chat = getChatById(chatId);
   const isChannel = Boolean(chat && chat.source === 'channel');
@@ -232,6 +242,10 @@ async function buildAndSendSummary(ctx, chatId, requestedHours) {
   // that content permanently, since every later "since you last checked" would
   // start from a timestamp covering messages they never saw.
   recordSummaryRead(requesterId, chatId);
+
+  // After delivery, so a tip never lands in front of the summary it follows.
+  // DM only — maybeShowTip checks.
+  await maybeShowTip(ctx, 'summary', { chatId, isChannel });
   return sent;
 }
 

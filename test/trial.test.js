@@ -55,8 +55,14 @@ function makeCtx(userId, lang = 'en') {
   };
 }
 
-async function start(userId, lang) {
+// The trial starts once there is something to summarize (services/trial), so by
+// default the user is in a group before they press /start.
+async function start(userId, lang, { withChat = true } = {}) {
   db.getOrCreateUser({ id: userId, username: `u${userId}`, firstName: 'New' });
+  if (withChat) {
+    db.getOrCreateChat({ id: -userId, title: `Group ${userId}`, type: 'group' });
+    db.linkUserToChat(-userId, userId);
+  }
   const ctx = makeCtx(userId, lang);
   await startHandler(ctx);
   return ctx;
@@ -66,7 +72,15 @@ function subscriptionRows(userId) {
   return db.db.prepare('SELECT * FROM subscriptions WHERE user_id = ? ORDER BY id').all(userId);
 }
 
-test('a first /start grants a week of premium, and says so', async () => {
+test('a first /start with nothing connected yet does not start the trial', async () => {
+  // It would otherwise be running down while they found a group to add.
+  const userId = 710;
+  const ctx = await start(userId, 'en', { withChat: false });
+  assert.equal(subscriptionRows(userId).length, 0);
+  assert.doesNotMatch(ctx.replies[0].text, /free trial/);
+});
+
+test('a first /start with a chat to summarize grants a week of premium, and says so', async () => {
   const userId = 700;
   const ctx = await start(userId);
 
@@ -133,7 +147,7 @@ test('a lapsed trial falls back to the free plan, keeping the earliest items', a
   // The "earliest N wins" rule, seen from the end of a trial: somebody who
   // added twenty channels keeps their first, and the rest wait.
   const userId = 704;
-  await start(userId);
+  db.getOrCreateUser({ id: userId, username: `u${userId}`, firstName: 'New' });
 
   // joined_at is set explicitly: "earliest N wins" orders by it, and three
   // links created in the same second fall through to the chat_id tiebreak,
@@ -147,6 +161,8 @@ test('a lapsed trial falls back to the free plan, keeping the earliest items', a
       .run(joined[i], chatId, userId);
   });
   db.setUserFilters(userId, { keywords: ['alpha', 'beta', 'gamma'], categories: [] });
+  // Already in the three groups, so this /start is what starts the trial.
+  await start(userId, 'en', { withChat: false });
 
   // On trial, everything is live.
   const onTrial = getLimits(db.getActiveSubscription(userId));

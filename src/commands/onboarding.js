@@ -7,6 +7,7 @@ const { escapeMarkdown, truncate } = require('../utils/formatters');
 const { t, DEFAULT_LANGUAGE } = require('../utils/i18n');
 const { armPrompt, clearPrompt, captureReply } = require('../utils/uiState');
 const { track, EVENTS } = require('../services/analytics');
+const { grantTrialIfDue, trialStartedText } = require('../services/trial');
 const logger = require('../utils/logger');
 
 /**
@@ -198,19 +199,25 @@ async function offerReferringGroup(ctx, chatId, isLinked) {
  * getMe, and an admin sees every message regardless, so a bot that is already
  * reading everything does not tell anyone to fix a problem they do not have.
  *
+ * Adding the bot to a group is also when the adder's trial starts, if it has
+ * not yet (services/trial) — granted before the throttle, since a real join is
+ * a real join even when the DM about it is skipped, and announced in the DM.
+ *
  * Best effort: someone who never started the bot cannot be messaged at all.
  */
 async function welcomeAdder(ctx, chat, adder, { isAdmin = false } = {}) {
   if (!adder || adder.is_bot) return false;
+  const trialGranted = grantTrialIfDue(adder.id);
   if (!claimAdderWelcome(chat.id, ADDER_WELCOME_THROTTLE_HOURS)) return false;
 
   const lang = (ctx.state && ctx.state.lang) || DEFAULT_LANGUAGE;
   const title = escapeMarkdown(chat.title || t(lang, 'common.chatFallback', { id: chat.id }));
   const seesEverything = isAdmin || !ctx.botInfo || ctx.botInfo.can_read_all_group_messages !== false;
   const privacyNote = seesEverything ? '' : `\n\n${t(lang, 'onboarding.adderPrivacyMode', { title })}`;
+  const trialNote = trialGranted ? `\n\n${trialStartedText(lang)}` : '';
 
   try {
-    await ctx.telegram.sendMessage(adder.id, t(lang, 'onboarding.adderWelcome', { title, privacyNote }), {
+    await ctx.telegram.sendMessage(adder.id, `${t(lang, 'onboarding.adderWelcome', { title, privacyNote })}${trialNote}`, {
       parse_mode: 'Markdown',
     });
     return true;
@@ -232,5 +239,6 @@ module.exports.needsOnboarding = needsOnboarding;
 module.exports.askWhatToCatchUpOn = askWhatToCatchUpOn;
 module.exports.offerReferringGroup = offerReferringGroup;
 module.exports.welcomeAdder = welcomeAdder;
+module.exports.pathKeyboard = pathKeyboard;
 module.exports.ADDER_WELCOME_THROTTLE_HOURS = ADDER_WELCOME_THROTTLE_HOURS;
 module.exports.ADD_TO_GROUP_PAYLOAD = ADD_TO_GROUP_PAYLOAD;

@@ -194,6 +194,24 @@ module.exports = {
     adderPrivacyMode:
       '⚠️ Right now Telegram only shows me messages that mention me or reply to me. ' +
       'Make me an admin in *{title}* so I can follow the whole conversation.',
+    // Once, to whoever added the bot, when the group has enough to summarize.
+    groupReady: "📝 *{title}* has been busy since I joined — there's enough to summarize now.",
+    // The one reminder after a /start that connected nothing. Says it will not ask again, and means it.
+    nudge:
+      '👋 Still want a hand catching up? Pick one and I will take it from there.\n\n' +
+      "If not, no worries — I won't ask again.",
+  },
+
+  // One line each, shown once ever, after the moment that makes them useful.
+  tips: {
+    find: '💡 *Tip:* you can search what was said in your groups — try `/find invoice`.',
+    digest: '💡 *Tip:* back for this chat again? /digest can send you its summary every morning, at an hour you pick.',
+    filter:
+      '💡 *Tip:* /filter lets you add keywords of your own — your name, a project, a client — ' +
+      'and I pull every mention out at the top of each summary.',
+    ask: '💡 *Tip:* you can also just ask — `/ask what did we decide about the launch?`',
+    muteButton: '🔕 No more tips',
+    muted: "Got it — I won't send any more tips.",
   },
 
   summary: {
@@ -509,6 +527,11 @@ module.exports = {
 
   status: {
     header: '📊 *Where you stand*',
+    checklistHeader: '🚀 *Getting started* — {done} of {total}',
+    checklistConnect: 'Connect a group or a channel',
+    checklistSummary: 'Get your first summary — /summary',
+    checklistDigest: 'Get it every morning — /digest',
+    checklistDigestLocked: 'Get it every morning — /digest (premium)',
     planFree: '*Plan*: Free',
     planPremium: '*Plan*: {plan} — until {expires}',
     planPremiumNoExpiry: '*Plan*: {plan}',
