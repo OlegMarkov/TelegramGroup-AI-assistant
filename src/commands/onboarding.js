@@ -200,15 +200,16 @@ async function offerReferringGroup(ctx, chatId, isLinked) {
  * reading everything does not tell anyone to fix a problem they do not have.
  *
  * Adding the bot to a group is also when the adder's trial starts, if it has
- * not yet (services/trial) — granted before the throttle, since a real join is
- * a real join even when the DM about it is skipped, and announced in the DM.
+ * not yet (services/trial), announced in this DM. Granted only past the
+ * throttle, so a trial never starts from a join whose DM was skipped; a
+ * throttled adder gets theirs at the next trigger, with its own announcement.
  *
  * Best effort: someone who never started the bot cannot be messaged at all.
  */
 async function welcomeAdder(ctx, chat, adder, { isAdmin = false } = {}) {
   if (!adder || adder.is_bot) return false;
-  const trialGranted = grantTrialIfDue(adder.id);
   if (!claimAdderWelcome(chat.id, ADDER_WELCOME_THROTTLE_HOURS)) return false;
+  const trialGranted = grantTrialIfDue(adder.id);
 
   const lang = (ctx.state && ctx.state.lang) || DEFAULT_LANGUAGE;
   const title = escapeMarkdown(chat.title || t(lang, 'common.chatFallback', { id: chat.id }));
