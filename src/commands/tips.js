@@ -89,12 +89,17 @@ async function maybeShowTip(ctx, after, { chatId = null, isChannel = false } = {
     const tip = pickTip(ctx.from.id, after, { chatId, isChannel, limits: getLimits(ctx.state.subscription) });
     if (!tip) return null;
 
+    // Recorded before sending, in the same synchronous step as the checks in
+    // pickTip: two updates from one person arriving together would otherwise
+    // both pass them before either had written anything, and send two tips. A
+    // send that then fails loses one tip, which is the cheaper way to be wrong.
+    track(EVENTS.TIP_SHOWN, { userId: ctx.from.id, chatId, metadata: { tip } });
+
     const lang = ctx.state.lang;
     await ctx.reply(t(lang, `tips.${tip}`), {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: [[{ text: t(lang, 'tips.muteButton'), callback_data: 'tips:mute' }]] },
     });
-    track(EVENTS.TIP_SHOWN, { userId: ctx.from.id, chatId, metadata: { tip } });
     return tip;
   } catch (error) {
     logger.warn('Could not show a tip', { userId: ctx.from.id, error: error.message });

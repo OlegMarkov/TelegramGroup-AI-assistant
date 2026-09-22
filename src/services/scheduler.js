@@ -339,6 +339,12 @@ async function runExpiryReminders({ sleep } = {}) {
   }
 }
 
+// The two onboarding jobs below run on the queue's hourly tick only, unlike the
+// retention sweep. That is a choice: if Redis is down for their whole window
+// (a week for the ready ping, two days for the nudge) the message is simply
+// not sent. Each is a courtesy, not a promise, and a second runner off the
+// queue would need its own guard against sending the same DM twice.
+
 // A group has enough for a first summary worth reading at this many messages,
 // or at the lower count once it has had a day — a quiet group should not wait
 // a week for a ping, and a handful of messages makes a thin first impression.
