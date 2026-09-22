@@ -401,6 +401,7 @@ module.exports = {
     pickTimeLocal: 'Pick a time to receive a daily DM summary. Times are in your timezone ({zone}):',
     unknownTimezone: 'I did not recognise that option — reopen /digest.',
     pickChat: 'Which chat do you want to configure?',
+    pickChatScheduledHint: '⏰ — a digest is already scheduled there.',
     turnOff: '🔕 Turn off',
     saved: 'Saved',
     enabled: '✅ Daily digest enabled for this chat at {time}.',
