@@ -45,7 +45,9 @@ function buildView(ctx) {
   } else {
     const lines = channels.map((c) => {
       const lock = allowedIds.has(c.id) ? '' : '🔒 ';
-      return `• ${lock}*${escapeMarkdown(c.title || c.username)}* — @${c.username}`;
+      // The handle sits outside any entity, where a bare _ opens an italic that
+      // never closes and Telegram rejects the whole list. Handles may contain _.
+      return `• ${lock}*${escapeMarkdown(c.title || c.username)}* — @${escapeMarkdown(c.username)}`;
     });
     text = `${t(lang, 'channel.listHeader')}\n${lines.join('\n')}\n\n${t(lang, 'channel.listHint')}`;
   }
@@ -176,7 +178,11 @@ async function addChannelFromInput(ctx, input, { addedKey = 'channel.added' } = 
   });
 
   await ctx.reply(
-    t(lang, addedKey, { title: escapeMarkdown(resolved.title), handle: resolved.handle }),
+    // Escaped for the same reason as in buildView: "(@{handle})" is outside any
+    // entity, so a handle like some_channel would make Telegram reject this
+    // reply — after the channel was already followed, leaving the user with no
+    // confirmation and, on the onboarding path, no summary.
+    t(lang, addedKey, { title: escapeMarkdown(resolved.title), handle: escapeMarkdown(resolved.handle) }),
     { parse_mode: 'Markdown' }
   );
 
