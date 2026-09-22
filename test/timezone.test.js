@@ -164,8 +164,10 @@ test('an unset timezone still offers exactly the four UTC hours it always did', 
 
   const ctx = makeCtx({ userId, chatId });
   await handlers.commands.digest(ctx);
+  // Even one chat is listed first; tapping it opens its times.
+  assert.ok(await fire(`digest:chat:${chatId}`, ctx));
 
-  const labels = buttonsOf(ctx.replies[0]).map((b) => b.text);
+  const labels = buttonsOf(ctx.replies[ctx.replies.length - 1]).map((b) => b.text);
   assert.deepEqual(
     labels.filter((l) => l.includes('UTC') && l.includes(':')),
     ['09:00 UTC', '12:00 UTC', '18:00 UTC', '21:00 UTC'],
@@ -263,4 +265,55 @@ test('a timezone cannot be set for a chat the user is not in', async () => {
 
   assert.equal(db.getUserTimezoneOffset(userId), null);
   assert.match(ctx.answers[0], /Not authorized/i);
+});
+
+// --- the chat picker -------------------------------------------------------
+
+test('a single chat is still listed, not skipped straight into its settings', async () => {
+  const userId = 1010;
+  const chatId = -1010;
+  db.getOrCreateUser({ id: userId, username: 'onechat', firstName: 'O' });
+  db.getOrCreateChat({ id: chatId, title: 'Only Group', type: 'group' });
+  db.linkUserToChat(chatId, userId);
+
+  const ctx = makeCtx({ userId, chatId });
+  await handlers.commands.digest(ctx);
+
+  assert.equal(ctx.replies.length, 1);
+  assert.match(ctx.replies[0].text, /Which chat/);
+  assert.deepEqual(
+    buttonsOf(ctx.replies[0]).map((b) => [b.text, b.callback_data]),
+    [['Only Group', `digest:chat:${chatId}`]],
+    'no schedule: just the title, as before'
+  );
+  assert.doesNotMatch(ctx.replies[0].text, /⏰/, 'no legend when nothing is marked');
+});
+
+test('a chat with a digest switched on is marked with its time, others are unchanged', async () => {
+  const userId = 1011;
+  db.getOrCreateUser({ id: userId, username: 'marked', firstName: 'M' });
+  for (const [id, title] of [
+    [-1011, 'Daily Group'],
+    [-1012, 'Weekly Group'],
+    [-1013, 'Plain Group'],
+    [-1014, 'Off Group'],
+  ]) {
+    db.getOrCreateChat({ id, title, type: 'group' });
+    db.linkUserToChat(id, userId);
+  }
+  db.setUserTimezoneOffset(userId, 180);
+  db.setScheduledDigest({ chatId: -1011, userId, hourUtc: 6 });
+  db.setScheduledDigest({ chatId: -1012, userId, hourUtc: 15, cadence: 'weekly', weekday: 5 });
+  db.setScheduledDigest({ chatId: -1014, userId, hourUtc: 9 });
+  db.disableScheduledDigest(-1014, userId);
+
+  const ctx = makeCtx({ userId, chatId: -1011 });
+  await handlers.commands.digest(ctx);
+
+  const labels = Object.fromEntries(buttonsOf(ctx.replies[0]).map((b) => [b.callback_data, b.text]));
+  assert.equal(labels['digest:chat:-1011'], '⏰ Daily Group · 09:00', "in the reader's clock (UTC+3)");
+  assert.equal(labels['digest:chat:-1012'], '⏰ Weekly Group · Fri 18:00', 'weekly says which day');
+  assert.equal(labels['digest:chat:-1013'], 'Plain Group');
+  assert.equal(labels['digest:chat:-1014'], 'Off Group', 'switched off reads the same as never set');
+  assert.match(ctx.replies[0].text, /⏰ — a digest is already scheduled/);
 });

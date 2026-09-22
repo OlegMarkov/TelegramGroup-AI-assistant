@@ -6,9 +6,10 @@ const {
   disableScheduledDigest,
   getUserTimezoneOffset,
   setUserTimezoneOffset,
+  getUserScheduledDigests,
 } = require('../services/database');
 const { getLimits } = require('../models/subscription');
-const { isGroupChat } = require('../utils/formatters');
+const { isGroupChat, truncate } = require('../utils/formatters');
 const {
   OFFSET_CHOICES,
   isValidOffset,
@@ -171,17 +172,37 @@ async function digestHandler(ctx) {
     return ctx.reply(t(lang, 'common.noLinkedChats'));
   }
 
-  if (chats.length === 1) {
-    return showDigestMenu(ctx, chats[0].id, chats[0].title);
-  }
+  // Always the list, even for one chat: jumping straight into its settings hid
+  // which chat they were for, and the list is where the ⏰ marks show what is
+  // already scheduled.
+  const offsetMinutes = getUserTimezoneOffset(ctx.from.id);
+  const scheduled = new Map(
+    getUserScheduledDigests(ctx.from.id)
+      .filter((d) => d.enabled)
+      .map((d) => [d.chat_id, d])
+  );
 
   const buttons = chats.map((c) => [
     {
-      text: c.title || t(lang, 'common.chatFallback', { id: c.id }),
+      text: pickerLabel(lang, c, scheduled.get(c.id), offsetMinutes),
       callback_data: `digest:chat:${c.id}`,
     },
   ]);
-  return ctx.reply(t(lang, 'digest.pickChat'), { reply_markup: { inline_keyboard: buttons } });
+  const hint = chats.some((c) => scheduled.has(c.id)) ? `\n\n${t(lang, 'digest.pickChatScheduledHint')}` : '';
+  return ctx.reply(`${t(lang, 'digest.pickChat')}${hint}`, { reply_markup: { inline_keyboard: buttons } });
+}
+
+/**
+ * A chat's row in the picker. One with a digest switched on says so, with when
+ * — "⏰ Team chat · 09:00", or "⏰ News · Mon 09:00" for a weekly one — in the
+ * reader's own clock like everywhere else. Anything else is just the title, as
+ * before: switched off and never set are the same thing to someone choosing.
+ */
+function pickerLabel(lang, chat, digest, offsetMinutes) {
+  const title = truncate(chat.title || t(lang, 'common.chatFallback', { id: chat.id }), 40);
+  if (!digest) return title;
+  const day = digest.cadence === 'weekly' ? `${t(lang, `digest.weekday${digest.weekday}`)} ` : '';
+  return `⏰ ${title} · ${day}${formatHour(digest.hour_utc, offsetMinutes)}`;
 }
 
 function chatTitleFor(ctx, chatId) {
