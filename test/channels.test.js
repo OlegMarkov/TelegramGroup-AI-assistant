@@ -248,6 +248,52 @@ test('an invalid handle is rejected before any network request is made', async (
   assert.equal(resolveCalls.length, before, 'no lookup was attempted');
 });
 
+/**
+ * Would Telegram's legacy Markdown accept this text? Mirrors its parser: a
+ * backslash escapes _ * ` [ only OUTSIDE an entity, and inside one everything
+ * up to the closing character is literal. An entity that never closes is the
+ * 400 "can't find end of the entity" that drops the whole message.
+ */
+function legacyMarkdownParses(text) {
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '\\' && '_*`['.includes(text[i + 1])) {
+      i++;
+      continue;
+    }
+    if (!'_*`['.includes(c)) continue;
+    const end = c === '[' ? ']' : c;
+    const close = text.indexOf(end, i + 1);
+    if (close === -1) return false;
+    i = close;
+  }
+  return true;
+}
+
+test('a handle with an underscore does not break the Added reply or the list', async () => {
+  // Telegram usernames may contain _, and "(@some_channel)" sits outside any
+  // entity, where a bare _ opens an italic that never closes: Telegram then
+  // rejects the whole message, after the channel was already followed.
+  const user = { id: 720, first_name: 'Under' };
+  db.getOrCreateUser({ id: user.id, firstName: user.first_name });
+
+  const added = await run('addchannel', { from: user, subscription: PREMIUM, text: '/addchannel @some_channel' });
+  const reply = added.replies.find((r) => /Added/.test(r));
+  assert.ok(reply);
+  assert.ok(legacyMarkdownParses(reply), `Telegram would reject: ${reply}`);
+  assert.match(reply, /@some\\_channel/, 'escaped, so it renders as @some_channel');
+
+  const listed = await run('channels', { from: user, subscription: PREMIUM, text: '/channels' });
+  assert.ok(legacyMarkdownParses(listed.replies[0]), `Telegram would reject: ${listed.replies[0]}`);
+  assert.match(listed.replies[0], /@some\\_channel/);
+});
+
+test('the Markdown checker itself tells the broken form from the fixed one', () => {
+  assert.equal(legacyMarkdownParses('✅ Added *T* (@some_channel).'), false);
+  assert.equal(legacyMarkdownParses('✅ Added *T* (@some\\_channel).'), true);
+  assert.equal(legacyMarkdownParses("I can't read *@some_channel*."), true, 'inside bold, _ is literal');
+});
+
 test('a premium user can add, list and remove a channel', async () => {
   const user = { id: 703, first_name: 'Sub' };
   db.getOrCreateUser({ id: user.id, firstName: user.first_name });
@@ -339,7 +385,10 @@ test('the picker offers only the channels the plan allows', async () => {
 
   // /channels still lists everything, with a note about what is locked.
   const ctx = await run('channels', { from: user, text: '/channels' });
-  assert.match(ctx.replies[0], /pick_a/);
+  // Escaped: these handles contain _, which unescaped would get the list
+  // rejected by Telegram outright.
+  assert.match(ctx.replies[0], /@pick\\_a/);
+  assert.ok(legacyMarkdownParses(ctx.replies[0]));
   assert.match(ctx.replies[0], /free plan/i, 'the locked ones are explained');
 });
 
