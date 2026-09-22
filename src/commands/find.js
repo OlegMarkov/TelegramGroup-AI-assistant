@@ -12,6 +12,7 @@ const {
 const { t, allTranslations } = require('../utils/i18n');
 const { createTokenStore } = require('../utils/uiState');
 const { track, EVENTS } = require('../services/analytics');
+const { maybeShowTip } = require('./tips');
 const logger = require('../utils/logger');
 
 // Ten per message: comfortably inside Telegram's 4096 characters even when
@@ -127,6 +128,7 @@ async function findHandler(ctx) {
     track(EVENTS.FIND_NO_RESULTS, { userId: ctx.from.id });
     return ctx.reply(t(lang, 'find.noResults', { query }));
   }
+  await maybeShowTip(ctx, 'find');
   return undefined;
 }
 

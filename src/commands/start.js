@@ -1,58 +1,11 @@
 const { mainMenu } = require('../keyboards');
-const { TRIAL_PLAN, TRIAL_DAYS } = require('../models/subscription');
-const {
-  createSubscription,
-  hasEverHadSubscription,
-  getChatById,
-  isUserLinkedToChat,
-} = require('../services/database');
-const { escapeMarkdown, formatDate } = require('../utils/formatters');
+const { getChatById, isUserLinkedToChat, hasUserStarted } = require('../services/database');
+const { startTrialForRequest, trialStartedText } = require('../services/trial');
+const { escapeMarkdown } = require('../utils/formatters');
 const { needsOnboarding, askWhatToCatchUpOn, offerReferringGroup, ADD_TO_GROUP_PAYLOAD } = require('./onboarding');
-const logger = require('../utils/logger');
 
 const { t } = require('../utils/i18n');
 const { track, EVENTS } = require('../services/analytics');
-
-/**
- * Gives a first-time user a week of premium, once ever.
- *
- * Written as a normal subscription row - plan 'trial', starsPaid 0, and a NULL
- * charge id - so it flows through getActiveSubscription and getLimits with no
- * special case anywhere else. Everything premium simply works, and when it
- * expires the user falls back to FREE_LIMITS by the same path a lapsed paid
- * plan does.
- *
- * NULL rather than a placeholder charge id: a made-up value collides with the
- * next comp on the partial unique index, which is exactly the bug that took a
- * production hotfix.
- *
- * Guarded on ever having had ANY subscription, not just a trial. Handing one to
- * a lapsed paying customer would be a discount for churning.
- */
-function grantTrialIfDue(ctx) {
-  const userId = ctx.from.id;
-  if (hasEverHadSubscription(userId)) return false;
-
-  try {
-    createSubscription({
-      userId,
-      plan: TRIAL_PLAN,
-      starsPaid: 0,
-      telegramChargeId: null,
-      // SQLite's own format, matching what payments.js writes.
-      expiresAt: formatDate(new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000)),
-    });
-  } catch (error) {
-    // A trial that could not be granted must not stop somebody starting the
-    // bot. They get the free plan, which is what they had a moment ago.
-    logger.error('Could not grant a trial', { userId, error: error.message });
-    return false;
-  }
-
-  track(EVENTS.TRIAL_STARTED, { userId });
-  logger.info('Granted a free trial', { userId, days: TRIAL_DAYS });
-  return true;
-}
 
 /**
  * The start payload carried by the link under a group summary, `g<chat id>`
@@ -78,16 +31,17 @@ function referringChatId(ctx) {
 
 module.exports = (bot) => {
   bot.start(async (ctx) => {
+    // Read before this /start is recorded, or every start would look like a
+    // return visit.
+    const firstStart = !hasUserStarted(ctx.from.id);
     track(EVENTS.USER_STARTED, { userId: ctx.from.id });
     const lang = ctx.state.lang;
-    const trialGranted = grantTrialIfDue(ctx);
-    const trialNote = trialGranted ? `\n\n${t(lang, 'start.trialGranted', { days: TRIAL_DAYS })}` : '';
 
     const fromChat = referringChatId(ctx);
     if (fromChat !== null) {
       // firstStart separates people the link brought in from existing users
-      // who happened to tap it; a granted trial is the "never been here" test.
-      track(EVENTS.REFERRAL_STARTED, { userId: ctx.from.id, chatId: fromChat, metadata: { firstStart: trialGranted } });
+      // who happened to tap it.
+      track(EVENTS.REFERRAL_STARTED, { userId: ctx.from.id, chatId: fromChat, metadata: { firstStart } });
     }
 
     // In a group this is either the "add to group" link arriving (its payload,
@@ -108,6 +62,9 @@ module.exports = (bot) => {
     // commands/onboarding. Two messages because a message carries one keyboard:
     // the reply menu arrives with the first, the inline choice with the next.
     const isNew = needsOnboarding(ctx.from.id);
+    // The trial starts with something to use it on (services/trial). Somebody
+    // with nothing connected gets it later, from whichever path they take.
+    const trialNote = !isNew && startTrialForRequest(ctx) ? `\n\n${trialStartedText(lang)}` : '';
     await ctx.reply(t(lang, isNew ? 'start.welcome' : 'start.welcomeBack', { name, trialNote }), {
       parse_mode: 'Markdown',
       ...mainMenu(lang),

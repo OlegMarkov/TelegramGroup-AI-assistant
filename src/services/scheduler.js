@@ -15,8 +15,15 @@ const {
   markReminderSent,
   getAppState,
   setAppState,
+  getChatsAwaitingReadyPing,
+  markReadyPinged,
+  isUserLinkedToChat,
+  getHoursSinceLastSummary,
+  hasUserStarted,
+  getUsersDueOnboardingNudge,
 } = require('./database');
-const { splitForTelegram, truncate, NO_PREVIEW } = require('../utils/formatters');
+const { splitForTelegram, truncate, escapeMarkdown, NO_PREVIEW } = require('../utils/formatters');
+const { pathKeyboard } = require('../commands/onboarding');
 const { createSender, isBlockedError, isBadRequestError } = require('../utils/telegramSend');
 const { SpendCapReachedError } = require('./aiBudget');
 const { feedbackKeyboard } = require('../commands/feedback');
@@ -332,6 +339,103 @@ async function runExpiryReminders({ sleep } = {}) {
   }
 }
 
+// A group has enough for a first summary worth reading at this many messages,
+// or at the lower count once it has had a day — a quiet group should not wait
+// a week for a ping, and a handful of messages makes a thin first impression.
+const READY_MESSAGES = 30;
+const READY_MESSAGES_AFTER_A_DAY = 15;
+
+/**
+ * "Your group has enough to summarize now", once, to whoever added the bot.
+ *
+ * This is the other half of the DM they got when it arrived, which said the
+ * first summary would need people to talk first. Nobody else is ever messaged:
+ * the adder chose to bring the bot in, and everyone else only happens to be in
+ * the group.
+ *
+ * Re-checked at send time rather than trusted from when the bot joined: an
+ * adder who has since left the group, or who has already summarized it and so
+ * does not need telling, is marked done without a message. One who never
+ * started the bot cannot be messaged, and stays pending in case they do within
+ * the week getChatsAwaitingReadyPing looks back.
+ */
+async function runGroupReadyPings({ sleep } = {}) {
+  const sender = createSender(sleep ? { sleep } : {});
+
+  for (const chat of getChatsAwaitingReadyPing()) {
+    const userId = chat.added_by;
+    const enough =
+      chat.message_count >= READY_MESSAGES ||
+      (chat.older_than_a_day && chat.message_count >= READY_MESSAGES_AFTER_A_DAY);
+    if (!enough) continue;
+
+    if (!isUserLinkedToChat(chat.id, userId) || getHoursSinceLastSummary(userId, chat.id) !== null) {
+      markReadyPinged(chat.id);
+      continue;
+    }
+    if (!hasUserStarted(userId)) continue;
+
+    const lang = normalizeLanguage(getUserLanguage(userId));
+    const title = chat.title || t(lang, 'common.chatFallback', { id: chat.id });
+
+    try {
+      await sender.send(() =>
+        telegram.sendMessage(userId, t(lang, 'onboarding.groupReady', { title: escapeMarkdown(title) }), {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: t(lang, 'onboarding.referralButton', { title: truncate(title, 40) }),
+                  callback_data: `summary:chat:${chat.id}:auto`,
+                },
+              ],
+            ],
+          },
+        })
+      );
+      markReadyPinged(chat.id);
+      track(EVENTS.GROUP_READY_SENT, { userId, chatId: chat.id });
+    } catch (error) {
+      if (isBlockedError(error)) {
+        // Same reasoning as the expiry reminders: they cannot be reached, and
+        // retrying hourly for the rest of the week is waste.
+        markReadyPinged(chat.id);
+        continue;
+      }
+      logger.warn('Group-ready DM failed', { userId, chatId: chat.id, error: error.message });
+    }
+  }
+}
+
+/**
+ * The one reminder to somebody who started the bot, looked around, and never
+ * connected anything. Never repeated, and only for people who did something
+ * after /start — see getUsersDueOnboardingNudge for why that matters.
+ *
+ * The event is recorded even when delivery was refused, because it is also
+ * what stops a second attempt.
+ */
+async function runOnboardingNudges({ sleep } = {}) {
+  const sender = createSender(sleep ? { sleep } : {});
+
+  for (const userId of getUsersDueOnboardingNudge()) {
+    const lang = normalizeLanguage(getUserLanguage(userId));
+    try {
+      await sender.send(() =>
+        telegram.sendMessage(userId, t(lang, 'onboarding.nudge'), { parse_mode: 'Markdown', ...pathKeyboard(lang) })
+      );
+      track(EVENTS.ONBOARDING_NUDGE_SENT, { userId });
+    } catch (error) {
+      if (isBlockedError(error)) {
+        track(EVENTS.ONBOARDING_NUDGE_SENT, { userId, metadata: { blocked: true } });
+        continue;
+      }
+      logger.warn('Onboarding nudge failed', { userId, error: error.message });
+    }
+  }
+}
+
 const RETENTION_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const SWEEP_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
@@ -458,6 +562,8 @@ function startScheduler() {
         runRetentionSweep();
         await runDueDigests();
         await runExpiryReminders();
+        await runGroupReadyPings();
+        await runOnboardingNudges();
       }
     },
     { connection }
@@ -476,6 +582,10 @@ module.exports = {
   startScheduler,
   runDueDigests,
   runExpiryReminders,
+  runGroupReadyPings,
+  runOnboardingNudges,
+  READY_MESSAGES,
+  READY_MESSAGES_AFTER_A_DAY,
   runRetentionSweep,
   startRetentionSweeps,
   warnIfBackupsAreStale,

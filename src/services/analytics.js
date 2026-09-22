@@ -16,6 +16,16 @@ const EVENTS = {
   // 'example' in metadata.path. Activation (a first summary within a day) is
   // the outcome it is read against.
   ONBOARDING_PATH_CHOSEN: 'onboarding_path_chosen',
+  // The one-time DM to someone who looked around after /start and stalled.
+  // metadata.blocked when it could not be delivered — recorded all the same,
+  // since it is also the marker that stops it being sent twice.
+  ONBOARDING_NUDGE_SENT: 'onboarding_nudge_sent',
+  // "Your group has enough to summarize", to whoever added the bot.
+  GROUP_READY_SENT: 'group_ready_sent',
+  // A contextual tip, metadata.tip naming which. Doubles as the record that
+  // each tip is shown once ever, so no table of its own.
+  TIP_SHOWN: 'tip_shown',
+  TIPS_MUTED: 'tips_muted',
   HELP_VIEWED: 'help_viewed',
   CHAT_LINKED: 'chat_linked',
   SUMMARY_REQUESTED: 'summary_requested',

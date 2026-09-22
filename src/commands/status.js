@@ -7,6 +7,7 @@ const {
   getUserFilters,
   getUserScheduledDigests,
   getUserTimezoneOffset,
+  countUserEvents,
 } = require('../services/database');
 const { getLimits } = require('../models/subscription');
 const { allowedKeywords } = require('../models/filter');
@@ -54,6 +55,34 @@ function formatHour(hourUtc, offsetMinutes) {
   return `${formatLocalTime(hourUtc, offsetMinutes)} ${formatOffset(offsetMinutes)}`;
 }
 
+/**
+ * "Getting started", until it is done: something connected, a first summary,
+ * a daily digest. Read from what exists and what the event log says happened,
+ * so it cannot disagree with the rest of the screen.
+ *
+ * A free plan cannot have a digest, so that step shows locked rather than
+ * being swapped for something else — the same convention as every other
+ * allowance here — and the list goes away once the two steps it can reach are
+ * done, rather than sitting on /status for ever over a step it cannot take.
+ */
+function checklistLines(lang, userId, limits, { connected, digests }) {
+  const summarized = countUserEvents(userId, EVENTS.SUMMARY_COMPLETED) > 0;
+  const hasDigest = digests.some((d) => d.enabled);
+  if (connected && summarized && (hasDigest || !limits.scheduledDigests)) return [];
+
+  const mark = (done) => (done ? '✅' : '⬜');
+  const done = [connected, summarized, hasDigest].filter(Boolean).length;
+  return [
+    t(lang, 'status.checklistHeader', { done, total: 3 }),
+    `${mark(connected)} ${t(lang, 'status.checklistConnect')}`,
+    `${mark(summarized)} ${t(lang, 'status.checklistSummary')}`,
+    limits.scheduledDigests
+      ? `${mark(hasDigest)} ${t(lang, 'status.checklistDigest')}`
+      : `🔒 ${t(lang, 'status.checklistDigestLocked')}`,
+    '',
+  ];
+}
+
 function buildStatus(ctx) {
   const lang = ctx.state.lang;
   const userId = ctx.from.id;
@@ -68,7 +97,12 @@ function buildStatus(ctx) {
   const allowedChannels = getAllowedUserChannels(userId, limits.maxChannels);
   const liveKeywords = allowedKeywords(keywords, limits.maxKeywords);
 
-  const lines = [t(lang, 'status.header'), ''];
+  const digests = getUserScheduledDigests(userId);
+  const lines = [
+    t(lang, 'status.header'),
+    '',
+    ...checklistLines(lang, userId, limits, { connected: groups.length + channels.length > 0, digests }),
+  ];
 
   if (subscription) {
     // A comped or granted row can have no expiry at all, which is not the same
@@ -121,7 +155,6 @@ function buildStatus(ctx) {
   );
 
   const offsetMinutes = getUserTimezoneOffset(userId);
-  const digests = getUserScheduledDigests(userId);
   lines.push('', t(lang, 'status.digestHeader'));
   if (digests.length === 0) {
     lines.push(t(lang, 'status.digestNone'));

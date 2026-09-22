@@ -41,9 +41,18 @@ Who gets the question is decided by the empty state rather than a "seen it" flag
 
 `/stats` and the usage snapshot report **activation** — of the people whose first `/start` was at least a day ago, how many completed a summary within 24h — and how many users chose each path (`onboarding_path_chosen`).
 
+**After the first minute** — the rest is taught when it becomes relevant, not up front:
+
+- **"Your group is ready."** The hourly scheduler DMs whoever added the bot, once, when a group added in the last week has 30 stored messages, or 15 once it has had a day. Re-checked at send time: an adder who left the group, or already summarized it, is not messaged. Groups that existed when this shipped are marked done. Nobody but the adder is ever messaged.
+- **Tips** ([`src/commands/tips.js`](src/commands/tips.js)) — one line after a success, in DM only, each once ever, at most one a day, with a "🔕 No more tips" button (`users.tips_muted`): `/find` after a first group summary, `/digest` after coming back to the same chat twice in a week (plans with digests only — no tip sells anything; free users are pitched at the paywall, where that funnel is measured), `/filter` after a third summary with no keywords set, `/ask` after a `/find` with results on a plan that has it. A shown tip is a `tip_shown` event, so there is no tip table and `/forgetme` already covers them.
+- **Checklist** in `/status` until done: connect a chat, a first summary, a daily digest (shown locked on the free plan, and the list goes away once the two reachable steps are done).
+- **One nudge**, 1–3 days after `/start`, to someone who still has nothing connected **and** did at least one more thing after `/start` — a person who pressed `/start` once and left has shown no interest in hearing from the bot. It offers the same three choices, says it will not ask again, and does not (`onboarding_nudge_sent`, recorded even when delivery is refused).
+
 ## Free trial
 
-A first `/start` grants **7 days of premium**, once ever. It is written as an ordinary subscription row — plan `trial`, `stars_paid 0`, and a **NULL** charge id — so it flows through `getActiveSubscription` and `getLimits` with no special case anywhere else, and lapses by the same path a paid plan does.
+**7 days of premium**, once ever, starting at the first moment there is something to summarize — not at the first `/start`, which let the trial run down while someone looked for a group to add, and counted everyone who pressed `/start` and left in trial → paid. [`src/services/trial.js`](src/services/trial.js) is called from each of those moments: `/start` when a chat is already connected, following a channel, adding the bot to a group (announced in the DM to the adder), and the first `/summary` asked for in DM (which covers people linked to a group only by talking in it). Only someone who has opened the bot gets one, so a group member's trial never runs out unannounced. The check and the insert are synchronous with no `await` between them in a one-process bot, so two triggers at once cannot grant two. Note that `trial_started` counts, and trial → paid, are not comparable across this change: before it, every first `/start` counted.
+
+It is written as an ordinary subscription row — plan `trial`, `stars_paid 0`, and a **NULL** charge id — so it flows through `getActiveSubscription` and `getLimits` with no special case anywhere else, and lapses by the same path a paid plan does.
 
 `trial` is deliberately **not** in `SUBSCRIPTION_PLANS`: pre-checkout validates a purchase against that map, so an entry there would make a week of premium buyable for zero stars.
 
@@ -64,7 +73,7 @@ Expiry reminders cover trials — the last day is the best moment there will eve
 | `/ask` questions per day | ❌ | 30 |
 | Scheduled daily/weekly digest (`/digest`) | ❌ | ✅ |
 
-A first `/start` gives **7 days of premium** (see [Free trial](#free-trial)). Topic categories in `/filter` are free on both plans.
+Connecting a first group or channel gives **7 days of premium** (see [Free trial](#free-trial)). Topic categories in `/filter` are free on both plans.
 
 Limits are defined in [`src/models/subscription.js`](src/models/subscription.js) (`FREE_LIMITS` / `PREMIUM_LIMITS`) and enforced per-requester in [`src/commands/summary.js`](src/commands/summary.js), [`src/commands/find.js`](src/commands/find.js), and [`src/commands/digest.js`](src/commands/digest.js). Daily usage resets at 00:00 UTC. If a user's subscription lapses, their scheduled digest is silently skipped (not deleted) until they resubscribe.
 
@@ -363,7 +372,7 @@ src/
 ├── bot.js            Bot initialization & launch
 ├── config.js         Environment variables
 ├── commands/         One module per feature, registered by name in bot.js (start, help, summary, find, ask, filter,
-│                     onboarding, channel, subscribe, status, feedback, digest, stats, admin, broadcast, moderation,
+│                     onboarding, tips, channel, subscribe, status, feedback, digest, stats, admin, broadcast, moderation,
 │                     privacy incl. /forgetme, language) plus fallback, registered last
 ├── locales/           Translations (en, ru)
 ├── keyboards/         Inline/reply keyboards

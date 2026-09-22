@@ -271,6 +271,19 @@ addColumnIfMissing('scheduled_digests', 'weekday', 'INTEGER NOT NULL DEFAULT 1')
 // counted and capped separately from summaries, which mostly hit the cache.
 addColumnIfMissing('daily_usage', 'ask_count', 'INTEGER NOT NULL DEFAULT 0');
 
+// "🔕 No more tips". A preference, like language, so it lives on the user; the
+// tips themselves are events (tip_shown), which /forgetme already anonymizes.
+addColumnIfMissing('users', 'tips_muted', 'INTEGER NOT NULL DEFAULT 0');
+
+// When whoever added the bot to a group was told it has enough to summarize.
+// Groups that already existed when this shipped are marked done in the same
+// step: their adders are well past a first summary, and a "ready" DM about a
+// group they have used for months would be noise.
+if (!tableColumns('chats').includes('ready_pinged_at')) {
+  addColumnIfMissing('chats', 'ready_pinged_at', 'TEXT');
+  db.exec(`UPDATE chats SET ready_pinged_at = datetime('now')`);
+}
+
 // One row per channel, no matter how many users follow it. Handles are stored
 // lowercased so @Durov and @durov cannot become two chats holding two copies
 // of the same content.
@@ -1387,6 +1400,116 @@ function getActivation(sinceDays) {
   return { eligible: row ? row.eligible : 0, activated: row ? row.activated : 0 };
 }
 
+/** Whether this person has ever opened the bot, as opposed to only talking in a group it is in. */
+function hasUserStarted(userId) {
+  return Boolean(
+    db.prepare(`SELECT 1 FROM events WHERE user_id = ? AND event_type = 'user_started' LIMIT 1`).get(userId)
+  );
+}
+
+/**
+ * How many times this person did something, optionally in one chat and within
+ * the last few hours. For tips and the checklist, which ask questions like
+ * "is this their first summary" of the event log rather than keeping counters
+ * of their own.
+ */
+function countUserEvents(userId, eventType, { chatId = null, sinceHours = null } = {}) {
+  const clauses = ['user_id = ?', 'event_type = ?'];
+  const params = [userId, eventType];
+  if (chatId !== null) {
+    clauses.push('chat_id = ?');
+    params.push(chatId);
+  }
+  if (sinceHours !== null) {
+    clauses.push(`created_at >= datetime('now', ?)`);
+    params.push(`-${sinceHours} hours`);
+  }
+  return db.prepare(`SELECT COUNT(*) AS n FROM events WHERE ${clauses.join(' AND ')}`).get(...params).n;
+}
+
+function hasShownTip(userId, tipId) {
+  return Boolean(
+    db
+      .prepare(
+        `SELECT 1 FROM events
+         WHERE user_id = ? AND event_type = 'tip_shown' AND json_extract(metadata, '$.tip') = ?
+         LIMIT 1`
+      )
+      .get(userId, tipId)
+  );
+}
+
+function areTipsMuted(userId) {
+  const row = db.prepare('SELECT tips_muted FROM users WHERE id = ?').get(userId);
+  return Boolean(row && row.tips_muted);
+}
+
+function setTipsMuted(userId, muted) {
+  db.prepare('UPDATE users SET tips_muted = ? WHERE id = ?').run(muted ? 1 : 0, userId);
+}
+
+/**
+ * Groups whose adder has not yet been told there is enough to summarize, with
+ * how much there is. Only groups added in the last week: past that, whoever
+ * added it has either found /summary or moved on, and a "ready" DM would come
+ * out of nowhere.
+ */
+function getChatsAwaitingReadyPing() {
+  return db
+    .prepare(
+      `SELECT c.id, c.title, c.added_by, c.created_at,
+              (c.created_at <= datetime('now', '-1 day')) AS older_than_a_day,
+              (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id) AS message_count
+       FROM chats c
+       WHERE c.source = 'bot'
+         AND c.is_active = 1
+         AND c.added_by IS NOT NULL
+         AND c.ready_pinged_at IS NULL
+         AND c.created_at >= datetime('now', '-7 days')`
+    )
+    .all();
+}
+
+function markReadyPinged(chatId) {
+  db.prepare(`UPDATE chats SET ready_pinged_at = datetime('now') WHERE id = ?`).run(chatId);
+}
+
+/**
+ * People who started the bot one to three days ago, still have nothing
+ * connected, did at least one more thing after /start, and were never nudged.
+ *
+ * "One more thing" is the difference between someone who looked around and
+ * stalled, and someone who pressed /start once and left: the first may welcome
+ * a hand, the second would be getting a message they have shown no interest in.
+ * The events a bare /start writes by itself do not count.
+ */
+function getUsersDueOnboardingNudge() {
+  return db
+    .prepare(
+      `WITH starts AS (
+         SELECT user_id, MIN(created_at) AS started_at
+         FROM events
+         WHERE event_type = 'user_started' AND user_id IS NOT NULL
+         GROUP BY user_id
+       )
+       SELECT s.user_id
+       FROM starts s
+       WHERE s.started_at <= datetime('now', '-1 day')
+         AND s.started_at >= datetime('now', '-3 days')
+         AND NOT EXISTS (SELECT 1 FROM chat_members cm WHERE cm.user_id = s.user_id)
+         AND NOT EXISTS (
+           SELECT 1 FROM events e WHERE e.user_id = s.user_id AND e.event_type = 'onboarding_nudge_sent'
+         )
+         AND EXISTS (
+           SELECT 1 FROM events e
+           WHERE e.user_id = s.user_id
+             AND e.event_type NOT IN ('user_started', 'trial_started', 'referral_started')
+         )`
+    )
+    .all()
+    .map((r) => r.user_id);
+}
+
 /** Which first-run path people picked, in distinct users per path. */
 function getOnboardingPaths(sinceDays) {
   return db
@@ -1769,6 +1892,14 @@ module.exports = {
   getDistinctEventUsers,
   getActivation,
   getOnboardingPaths,
+  hasUserStarted,
+  countUserEvents,
+  hasShownTip,
+  areTipsMuted,
+  setTipsMuted,
+  getChatsAwaitingReadyPing,
+  markReadyPinged,
+  getUsersDueOnboardingNudge,
   getRetentionCurve,
   getWeeklyCohorts,
   getDailyActiveUsers,
